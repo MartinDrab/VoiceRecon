@@ -32,6 +32,10 @@ Options:
   --audio <file>               the conversation recording (default: recording.wav in the folder)
   --reference <file>           the reference transcript (default: reference.txt in the folder)
   --app-voices                 use the voices enrolled in VoiceRecon instead of the folder's voices/
+                               (and VoiceRecon's names and terms)
+  --words <file>               names and terms the recognizer should prefer, one per line
+                               (the voices' names are always included)
+  --no-words                   no names and terms at all, not even the voices' names
   --threshold <list>           speaker match thresholds to try, e.g. 0.3,0.4,0.5
   --min-silence <list>         seconds of silence that end an utterance, e.g. 0.25,0.35,0.5
   --change-similarity <list>   similarity below which an utterance is split between speakers
@@ -55,6 +59,8 @@ function parseArgs(argv) {
     if (a === '--audio') opts.audio = value();
     else if (a === '--reference') opts.reference = value();
     else if (a === '--app-voices') opts.appVoices = true;
+    else if (a === '--words') opts.words = value();
+    else if (a === '--no-words') opts.noWords = true;
     else if (a === '--threshold') opts.lists.threshold = list(value(), a);
     else if (a === '--min-silence') opts.lists.minSilence = list(value(), a);
     else if (a === '--change-similarity') opts.lists.changeSimilarity = list(value(), a);
@@ -111,6 +117,7 @@ function appVoices() {
       voices: rows.map((r) => ({ name: r.name, file: path.join(config.dataDir, 'recordings', String(r.file)) })),
       threshold: getSetting(db, 'speakerThreshold', config.speakerThreshold),
       learnFromSpeech: getSetting(db, 'learnFromSpeech', false),
+      vocabulary: getSetting(db, 'vocabulary', []),
     };
   } finally {
     db.close();
@@ -133,7 +140,8 @@ function cacheTranscriptions(engine) {
   const cache = new Map();
   const transcribe = engine.transcribe.bind(engine);
   engine.transcribe = (samples, opts = {}) => {
-    const key = crypto.createHash('sha1').update(new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength)).digest('hex');
+    const key = crypto.createHash('sha1').update(new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength))
+      .update(engine.hotwords).digest('hex');
     if (!cache.has(key)) cache.set(key, transcribe(samples, opts));
     return cache.get(key);
   };
@@ -240,12 +248,18 @@ async function main() {
       }
     }
 
+    const words = [...(app ? app.vocabulary : []),
+      ...(opts.words ? fs.readFileSync(opts.words, 'utf8').split(/\r?\n/).map((w) => w.trim()).filter(Boolean) : [])];
+    if (words.length) voices.setVocabulary(words);
+    const preferred = opts.noWords ? engine.setHotwords([]) : engine.setHotwords(voices.hotwords());
+
     const refSpeakers = [...new Set(refTurns.map((t) => t.speaker))];
     const enrolled = voices.list().filter((v) => v.samples.length);
     const shown = path.relative(process.cwd(), audioFile);
     console.log(`Recording: ${shown.startsWith('..') ? audioFile : shown} (${(duration / 60).toFixed(1)} min)`);
     console.log(`Reference: ${refTurns.length} turns, ${refSpeakers.length} speakers (${refSpeakers.join(', ')})`);
     console.log(`Voices:    ${enrolled.map((v) => `${v.name} (${Math.round(v.speechSeconds)} s)`).join(', ') || 'none'}`);
+    console.log(`Words:     ${preferred.join(', ') || 'none'}`);
     const notEnrolled = refSpeakers.filter((s) => !enrolled.some((v) => v.name.toLowerCase() === s.toLowerCase()));
     if (notEnrolled.length) console.log(`           not enrolled (expected as unknown speakers): ${notEnrolled.join(', ')}`);
 

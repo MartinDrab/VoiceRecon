@@ -31,6 +31,10 @@ module.exports = {
   'Color must look like #RRGGBB.': 'Barva musí mít tvar #RRGGBB.',
   'Threshold must be between 0.05 and 0.95.': 'Práh musí být mezi 0,05 a 0,95.',
   'Expected true or false.': 'Očekává se true nebo false.',
+  'Expected a list of names and terms.': 'Očekává se seznam jmen a pojmů.',
+  'At most {max} names and terms.': 'Nejvýše {max} jmen a pojmů.',
+  '“{word}” is too long (at most {max} characters).': '„{word}“ je příliš dlouhé (nejvýše {max} znaků).',
+  '“{word}” may not contain / or :.': '„{word}“ nesmí obsahovat / ani :.',
   'Recordings may be at most 10 minutes long.': 'Nahrávka může být dlouhá nejvýše 10 minut.',
   'Not enough speech in the recording.': 'V nahrávce je příliš málo řeči.',
   'Not enough speech in the recording (found {found} s, need at least {need} s).':

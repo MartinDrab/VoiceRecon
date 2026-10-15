@@ -212,6 +212,10 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.strictEqual((await call('GET', '/api/voices')).learnFromSpeech, false);
     await call('PUT', '/api/settings/learn', { enabled: true });
     assert.strictEqual((await call('GET', '/api/voices')).learnFromSpeech, true);
+    await call('PUT', '/api/settings/vocabulary', { words: ['Kyjev', ' Starlink '] });
+    assert.deepStrictEqual((await call('GET', '/api/voices')).vocabulary, ['Kyjev', 'Starlink']);
+    await assert.rejects(call('PUT', '/api/settings/vocabulary', { words: ['a/b'] }), /400/);
+    await call('PUT', '/api/settings/vocabulary', { words: [] });
 
     // an uploaded recording is transcribed in the background into a new transcript, like live audio
     const recording = fs.readFileSync(path.join(FIXTURES, 'conversation.wav'));

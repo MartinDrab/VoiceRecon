@@ -27,6 +27,9 @@ const engine = new SpeechEngine(config);
 const voices = new VoiceManager(db, engine, { dataDir: config.dataDir, defaultThreshold: config.speakerThreshold });
 const transcripts = new TranscriptStore(db, voices);
 const uploads = new UploadQueue({ dataDir: config.dataDir, engine, voices, transcripts });
+// The recognizer prefers the voices' names and the vocabulary from the Voices page.
+const syncHotwords = () => engine.ready && engine.setHotwords(voices.hotwords());
+voices.on('changed', syncHotwords);
 
 const app = express();
 app.disable('x-powered-by');
@@ -159,6 +162,7 @@ api.get('/voices', user, (_req, res) => res.json({
   voices: voices.list(),
   threshold: voices.threshold,
   learnFromSpeech: voices.learnFromSpeech,
+  vocabulary: voices.vocabulary,
   ready: engine.ready,
 }));
 api.post('/voices', user, json, (req, res) => {
@@ -204,6 +208,10 @@ api.put('/settings/threshold', admin, json, (req, res) => {
 api.put('/settings/learn', admin, json, (req, res) => {
   voices.setLearnFromSpeech(req.body.enabled);
   res.json({ learnFromSpeech: voices.learnFromSpeech });
+});
+api.put('/settings/vocabulary', admin, json, (req, res) => {
+  voices.setVocabulary(req.body.words);
+  res.json({ vocabulary: voices.vocabulary });
 });
 
 // saved transcripts (everyone can read and edit; deleting is for the author and administrators)
@@ -305,6 +313,7 @@ const t0 = Date.now();
 engine.load()
   .then(() => {
     voices.init();
+    syncHotwords();
     console.log(`Speech models ready in ${((Date.now() - t0) / 1000).toFixed(1)} s.`);
   })
   .catch((err) => console.error(`Speech models failed to load: ${err.message}`))

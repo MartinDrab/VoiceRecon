@@ -33,6 +33,14 @@
         <span class="muted small grow" data-i18n>Lines that are recognized very clearly refine the voices for your room and microphone.
           Corrections made on the transcript page are always learned.</span>
       </div>
+      <div class="settings-bar vocabulary-bar">
+        <label for="vocabulary"><strong data-i18n>Names and terms</strong></label>
+        <textarea id="vocabulary" rows="3" placeholder="One per line, e.g. Kyjev" data-i18n-attr="placeholder" spellcheck="false"></textarea>
+        <div class="vocabulary-side">
+          <span class="muted small" data-i18n>The recognizer prefers these words where they fit what was said, e.g. names, places and product names. The voices' names are included automatically, more lightly; add a name here too if it is still misheard.</span>
+          <button class="btn btn-sm" type="button" id="vocabulary-save" data-i18n>Save</button>
+        </div>
+      </div>
     </div>
 
     <div class="voice-grid" id="grid"></div>

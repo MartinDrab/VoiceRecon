@@ -33,6 +33,13 @@ const CHANGE_MIN_SIDE = 2; // windows on each side of a split
 // real voices answering without a pause: 0.3 left most changes unsplit, 0.5 found them (95% of speech
 // time credited correctly instead of 86%) without splitting anyone's own speech.
 const CHANGE_MAX_SIMILARITY = 0.5;
+// Enrolled voices taking turns: a window counts for a voice when it matches it clearly (above the
+// threshold and this far ahead of the next voice), and a voice must hold for this many windows.
+const VOICE_MARGIN = 0.1;
+const VOICE_RUN = 1;
+
+// Long stretches of one speaker are split into lines at sentence ends, each at least this long.
+const LINE_MIN_SECONDS = 3;
 
 const DEBUG = process.env.VOICERECON_DEBUG === '1';
 const debug = (...args) => DEBUG && console.log('[transcriber]', ...args);
@@ -216,26 +223,49 @@ class TranscriptionSession extends EventEmitter {
         if (r.text) {
           const turns = await this.speakerTurns(core);
           if (this.closed) return;
-          const offset = (coreStart - from) / SAMPLE_RATE;
-          const texts = turns.length > 1
-            ? splitWords(r, turns.slice(1).map((t) => t.start / SAMPLE_RATE + offset))
-            : [r.text];
-          if (turns.length > 1) debug(`  split at ${turns.slice(1).map((t) => (t.start / SAMPLE_RATE).toFixed(2)).join(', ')} s:`, texts);
+          const audioStart = from / SAMPLE_RATE; // word times count from here
+          const words = wordsOf(r);
+          // Each speaker's words; without word times only the first part can get the text.
+          const parts = words
+            ? cutWords(words, turns.slice(1).map((t) => (coreStart + t.start) / SAMPLE_RATE - audioStart))
+            : [null];
+          if (turns.length > 1) debug(`  split at ${turns.slice(1).map((t) => (t.start / SAMPLE_RATE).toFixed(2)).join(', ')} s`);
           turns.forEach((t, i) => {
-            if (!texts[i]) return;
+            const own = words ? parts[i] || [] : null; // null: no word times
+            if (own ? !wordsText(own) : i > 0) return;
             const part = core.subarray(t.start, t.end);
             const embedding = this.engine.embed(part);
-            const id = ++this.seq;
             const speaker = this.assignSpeaker(part, embedding);
-            this.remember(id, embedding, part.length / SAMPLE_RATE);
-            this.emit('message', {
-              type: 'final',
-              id,
-              start: round((coreStart + t.start) / SAMPLE_RATE),
-              end: round((coreStart + t.end) / SAMPLE_RATE),
-              text: texts[i],
-              lang: r.lang,
-              speaker,
+            const partStart = (coreStart + t.start) / SAMPLE_RATE;
+            const partEnd = (coreStart + t.end) / SAMPLE_RATE;
+            // One line per few sentences. A cut lies midway between the words on either side; one
+            // that would leave less than a second of this part on either side is not made.
+            const lines = own ? [] : [null];
+            const edges = [partStart];
+            const sentences = own ? sentenceLines(own) : [];
+            let pending = [];
+            sentences.forEach((line, j) => {
+              pending = pending.concat(line);
+              const next = sentences[j + 1];
+              const cut = next && audioStart + (line[line.length - 1].end + next[0].start) / 2;
+              if (next && (cut - edges[edges.length - 1] < 1 || partEnd - cut < 1)) return;
+              lines.push(pending);
+              pending = [];
+              if (next) edges.push(cut);
+            });
+            edges.push(partEnd);
+            lines.forEach((line, j) => {
+              const id = ++this.seq;
+              this.remember(id, embedding, part.length / SAMPLE_RATE); // a correction learns the whole part
+              this.emit('message', {
+                type: 'final',
+                id,
+                start: round(edges[j]),
+                end: round(edges[j + 1]),
+                text: line ? wordsText(line) : r.text,
+                lang: r.lang,
+                speaker,
+              });
             });
           });
         }
@@ -300,6 +330,7 @@ class TranscriptionSession extends EventEmitter {
       return l2normalize(acc);
     };
     const cuts = [];
+    // Within a part (windows lo..hi), cut where its halves sound least alike, if unlike enough.
     const split = (lo, hi, depth) => {
       if (depth > 3 || hi - lo < 2 * CHANGE_MIN_SIDE) return;
       let best = -1;
@@ -316,12 +347,44 @@ class TranscriptionSession extends EventEmitter {
       cuts.push(best);
       split(best, hi, depth + 1);
     };
-    split(0, embs.length, 0);
+    // Enrolled voices taking turns are found first: people who sound alike may still be told apart
+    // by their recordings. Within each part, the halves' similarity finds everyone else.
+    const parts = [0, ...this.voiceChanges(embs), embs.length];
+    for (let i = 0; i + 1 < parts.length; i++) {
+      if (i > 0) cuts.push(parts[i]);
+      split(parts[i], parts[i + 1], 0);
+    }
+    cuts.sort((a, b) => a - b);
     if (!cuts.length) return whole;
     // Boundary between windows k-1 and k: midway between their centres.
     const bounds = cuts.map((k) => k * CHANGE_HOP + (CHANGE_WIN - CHANGE_HOP) / 2);
     const edges = [0, ...bounds, core.length];
     return edges.slice(1).map((end, i) => ({ start: edges[i], end }));
+  }
+
+  /**
+   * Windows (indexes into `embs`) where one enrolled voice takes over from another: each window is
+   * matched against the voices, and a change counts when both voices hold for VOICE_RUN windows
+   * that match them clearly. A cut lies midway between the last window of one voice and the first
+   * of the next.
+   */
+  voiceChanges(embs) {
+    const runs = []; // { voiceId, first, last } window indexes
+    embs.forEach((e, k) => {
+      const { voiceId, scores } = this.voices.identify(e);
+      if (voiceId === null || (scores[1] && scores[0].score - scores[1].score < VOICE_MARGIN)) return;
+      const run = runs[runs.length - 1];
+      if (run && run.voiceId === voiceId) run.last = k;
+      else runs.push({ voiceId, first: k, last: k });
+    });
+    const solid = [];
+    for (const run of runs) {
+      if (run.last - run.first + 1 < VOICE_RUN) continue;
+      const prev = solid[solid.length - 1];
+      if (prev && prev.voiceId === run.voiceId) prev.last = run.last;
+      else solid.push({ ...run });
+    }
+    return solid.slice(1).map((run, i) => Math.round((solid[i].last + run.first + 1) / 2));
   }
 
   /** Matches without changing any state (used for interim results). */
@@ -502,8 +565,14 @@ function round(x) {
  * to the estimated time. Tokens starting with a space begin a new word.
  */
 function splitWords(result, bounds) {
-  const { tokens, timestamps, durations, text } = result;
-  if (!tokens.length || tokens.length !== timestamps.length) return [text];
+  const words = wordsOf(result);
+  return words ? cutWords(words, bounds).map(wordsText) : [result.text];
+}
+
+/** The recognized words with their times in seconds, [{ text, start, end }]; null without token times. */
+function wordsOf(result) {
+  const { tokens, timestamps, durations } = result;
+  if (!tokens.length || tokens.length !== timestamps.length) return null;
   const words = [];
   tokens.forEach((tok, i) => {
     const end = timestamps[i] + (durations[i] || 0);
@@ -514,7 +583,11 @@ function splitWords(result, bounds) {
       w.end = end;
     }
   });
+  return words;
+}
 
+/** Cuts words into consecutive parts near the given times (see splitWords); returns the parts. */
+function cutWords(words, bounds) {
   const cuts = []; // index of the first word of each following part
   let min = 1;
   for (const b of bounds) {
@@ -531,16 +604,43 @@ function splitWords(result, bounds) {
         best = j;
       }
     }
-    if (best < 0) best = Math.max(min, words.findIndex((w) => w.start >= b));
-    if (best < 0 || best >= words.length) best = words.length;
+    if (best < 0) {
+      // No word near the time: cut before the first word after it. With none after it (the
+      // recognizer missed the next speaker's words), every word stays with the earlier part.
+      const after = words.findIndex((w, j) => j >= min && w.start >= b);
+      best = after < 0 ? words.length : after;
+    }
     cuts.push(best);
     min = Math.min(best + 1, words.length);
   }
   const edges = [0, ...cuts, words.length];
-  return edges.slice(1).map((end, i) => {
-    const t = words.slice(edges[i], end).map((w) => w.text).join('').trim();
-    return t && t[0].toUpperCase() + t.slice(1);
-  });
+  return edges.slice(1).map((end, i) => words.slice(edges[i], end));
 }
 
-module.exports = { TranscriptionSession, splitWords, dropLead, CHANGE_MAX_SIMILARITY };
+function wordsText(words) {
+  const t = words.map((w) => w.text).join('').trim();
+  return t && t[0].toUpperCase() + t.slice(1);
+}
+
+/**
+ * Splits one speaker's words into lines at sentence ends, so that a long stretch of speech does not
+ * become one long line. A cut needs at least LINE_MIN_SECONDS on both sides, a sentence end before
+ * it (not "32." as in "32. epizoda") and a capital letter or digit after it.
+ */
+function sentenceLines(words) {
+  const lines = [];
+  let first = 0;
+  const last = words.length - 1;
+  for (let j = 0; j < last; j++) {
+    const end = words[j].text.trim();
+    if (!/[.?!…]$/.test(end) || /^\d+\.$/.test(end) || !/^\s*[\p{Lu}\d]/u.test(words[j + 1].text)) continue;
+    if (words[j].end - words[first].start < LINE_MIN_SECONDS) continue;
+    if (words[last].end - words[j + 1].start < LINE_MIN_SECONDS) break;
+    lines.push(words.slice(first, j + 1));
+    first = j + 1;
+  }
+  lines.push(words.slice(first));
+  return lines;
+}
+
+module.exports = { TranscriptionSession, splitWords, dropLead, sentenceLines, wordsOf, CHANGE_MAX_SIMILARITY };

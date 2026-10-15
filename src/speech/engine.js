@@ -1,6 +1,8 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const sherpa = require('sherpa-onnx-node');
 const { concat, resample } = require('../audio');
 const { HttpError } = require('../errors');
@@ -10,6 +12,46 @@ const VAD_WINDOW = 512; // samples per Silero VAD step at 16 kHz
 const MIN_EMBED_SECONDS = 0.6;
 const EMBED_CHUNK_SECONDS = 6;
 const EMPTY_RESULT = { text: '', lang: '', tokens: [], timestamps: [], durations: [] };
+// Names and terms (hotwords) need beam search; 4 paths cost about 20-40% more decoding time.
+const BEAM_PATHS = 4;
+
+/**
+ * The model's tokens ("▁" starts a word). Hotwords are given as words, which the recognizer splits
+ * into tokens with a BPE vocabulary file (token, tab, score). Parakeet ships only tokens.txt, whose
+ * order is the vocabulary's merge order, so a vocabulary with score = -id is written next to it
+ * (or to the temp folder if the models folder is read-only). Returns the pieces and the file.
+ */
+function loadVocabulary(tokensFile) {
+  const tokens = fs.readFileSync(tokensFile, 'utf8').split(/\r?\n/).filter(Boolean).map((line) => {
+    const i = line.lastIndexOf(' ');
+    return { piece: line.slice(0, i), id: Number(line.slice(i + 1)) };
+  }).filter((t) => !/^<.*>$/.test(t.piece)); // <unk>, <blk>, … are not text
+  const pieces = new Set(tokens.map((t) => t.piece));
+  const content = `${tokens.map((t) => `${t.piece}\t${-t.id}`).join('\n')}\n`;
+  const shipped = path.join(path.dirname(tokensFile), 'bpe.vocab');
+  if (fs.existsSync(shipped)) return { pieces, file: shipped };
+  for (const file of [path.join(path.dirname(tokensFile), 'voicerecon-bpe.vocab'), path.join(os.tmpdir(), 'voicerecon-bpe.vocab')]) {
+    try {
+      if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== content) fs.writeFileSync(file, content);
+      return { pieces, file };
+    } catch { /* read-only: try the next place */ }
+  }
+  return { pieces: new Set(), file: '' };
+}
+
+/** Whether every word of a phrase can be written with the model's tokens (else the recognizer drops the whole list). */
+function spellable(phrase, pieces) {
+  return phrase.split(' ').every((word) => {
+    let rest = `▁${word}`;
+    while (rest) {
+      let n = rest.length;
+      while (n > 0 && !pieces.has(rest.slice(0, n))) n--;
+      if (!n) return false;
+      rest = rest.slice(n);
+    }
+    return true;
+  });
+}
 
 function l2normalize(v) {
   let n = 0;
@@ -60,6 +102,8 @@ class SpeechEngine {
     this.loadError = null;
     this.queue = [];
     this.running = null; // the job being decoded
+    this.vocabulary = { pieces: new Set(), file: '' };
+    this.hotwords = ''; // in the recognizer's syntax: "phrase :score/phrase :score"
   }
 
   async load() {
@@ -70,7 +114,8 @@ class SpeechEngine {
       }
       const { asr, threads, speakerModel } = this.config;
       this.extractor = new sherpa.SpeakerEmbeddingExtractor({ model: speakerModel, numThreads: Math.min(2, threads), debug: 0 });
-      this.speakerModelName = require('path').basename(speakerModel);
+      this.speakerModelName = path.basename(speakerModel);
+      this.vocabulary = loadVocabulary(asr.tokens);
       this.recognizer = await sherpa.OfflineRecognizer.createAsync({
         featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
         modelConfig: {
@@ -79,13 +124,32 @@ class SpeechEngine {
           numThreads: threads,
           modelType: 'nemo_transducer',
           debug: 0,
+          ...(this.vocabulary.file ? { modelingUnit: 'bpe', bpeVocab: this.vocabulary.file } : {}),
         },
+        decodingMethod: 'modified_beam_search',
+        maxActivePaths: BEAM_PATHS,
       });
       this.ready = true;
     } catch (err) {
       this.loadError = err;
       throw err;
     }
+  }
+
+  /**
+   * Names and terms the recognizer should prefer when they fit what was said (contextual biasing),
+   * each with its boost per token (see VoiceManager.hotwords()). Phrases the model cannot spell are
+   * left out; a phrase listed twice keeps its higher boost. Returns the phrases in use.
+   * @param {{ text: string, score: number }[]} entries
+   */
+  setHotwords(entries) {
+    const scores = new Map();
+    for (const { text, score } of entries) {
+      const p = String(text).replace(/[/:]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (p && this.vocabulary.file && spellable(p, this.vocabulary.pieces)) scores.set(p, Math.max(score, scores.get(p) || 0));
+    }
+    this.hotwords = [...scores].map(([p, score]) => `${p} :${score}`).join('/');
+    return [...scores.keys()];
   }
 
   /**
@@ -195,7 +259,7 @@ class SpeechEngine {
     const job = this.queue.shift();
     this.running = job;
     try {
-      const stream = this.recognizer.createStream();
+      const stream = this.hotwords ? this.recognizer.createStream(this.hotwords) : this.recognizer.createStream();
       stream.acceptWaveform({ samples: job.samples, sampleRate: SAMPLE_RATE });
       const r = await this.recognizer.decodeAsync(stream);
       job.resolve({
@@ -215,5 +279,5 @@ class SpeechEngine {
 }
 
 module.exports = {
-  SpeechEngine, SAMPLE_RATE, VAD_WINDOW, l2normalize, cosine, meanEmbedding, embeddingToBlob, embeddingFromBlob,
+  SpeechEngine, SAMPLE_RATE, VAD_WINDOW, l2normalize, cosine, meanEmbedding, embeddingToBlob, embeddingFromBlob, spellable,
 };

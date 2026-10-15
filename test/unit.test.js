@@ -10,8 +10,8 @@ const { decodeWav, encodeWav, int16ToFloat } = require('../src/audio');
 const { openDatabase, getSetting, setSetting } = require('../src/db');
 const { Auth, hashPassword, verifyPassword, parseCookies } = require('../src/auth');
 const { VoiceManager } = require('../src/voices');
-const { TranscriptionSession, splitWords, dropLead } = require('../src/transcriber');
-const { SpeechEngine, l2normalize } = require('../src/speech/engine');
+const { TranscriptionSession, splitWords, dropLead, sentenceLines, wordsOf } = require('../src/transcriber');
+const { SpeechEngine, l2normalize, spellable } = require('../src/speech/engine');
 const { readHeader, titleFromName } = require('../src/uploads');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-test-'));
@@ -252,6 +252,79 @@ test('settings are stored as JSON', () => {
   setSetting(db, 'x', 0.55);
   assert.strictEqual(getSetting(db, 'x', 0.4), 0.55);
   db.close();
+});
+
+test('names and terms: validated, listed with their boost, and only what the model can spell', () => {
+  const dataDir = tmp();
+  const db = openDatabase(dataDir);
+  const vm = new VoiceManager(db, { ready: true, speakerModelName: 'm' }, { dataDir, defaultThreshold: 0.5 });
+  vm.init();
+  vm.create({ name: 'jirka', color: '#ff0000' });
+  vm.setVocabulary(['  Kyjev ', 'Kyjev', '', 'Andrew  Sharp']);
+  assert.deepStrictEqual(vm.vocabulary, ['Kyjev', 'Andrew Sharp']);
+  assert.throws(() => vm.setVocabulary(['a/b']), /may not contain/);
+  assert.throws(() => vm.setVocabulary(['x'.repeat(61)]), /too long/);
+  assert.throws(() => vm.setVocabulary('Kyjev'), /list/);
+  assert.deepStrictEqual(vm.hotwords(), [
+    { text: 'jirka', score: 1 }, { text: 'Jirka', score: 1 }, // voice names: lighter, also capitalized
+    { text: 'Kyjev', score: 2 }, { text: 'Kyjev', score: 2 },
+    { text: 'Andrew Sharp', score: 2 }, { text: 'Andrew Sharp', score: 2 },
+  ]);
+
+  const engine = new SpeechEngine({});
+  const pieces = new Set(['▁', '▁J', '▁j', 'ir', 'ka', 'K', 'y', 'jev', '▁Andrew', '▁Sh', 'arp']);
+  assert.ok(spellable('Jirka', pieces) && spellable('Andrew Sharp', pieces));
+  assert.ok(!spellable('Jiřka', pieces), 'a letter the model does not know');
+  engine.vocabulary = { pieces, file: 'bpe.vocab' };
+  const used = engine.setHotwords([...vm.hotwords(), { text: 'Jiřka', score: 1 }, { text: 'Kyjev', score: 1 }, { text: 'a/b:c', score: 1 }]);
+  assert.deepStrictEqual(used, ['jirka', 'Jirka', 'Kyjev', 'Andrew Sharp']);
+  assert.strictEqual(engine.hotwords, 'jirka :1/Jirka :1/Kyjev :2/Andrew Sharp :2', 'a phrase listed twice keeps its higher boost');
+  engine.vocabulary = { pieces, file: '' };
+  assert.deepStrictEqual(engine.setHotwords(vm.hotwords()), [], 'without a vocabulary file no words can be given');
+  assert.strictEqual(engine.hotwords, '');
+  db.close();
+});
+
+test('long stretches of one speaker become lines at sentence ends', () => {
+  // words: [text, start, end] in seconds
+  const result = (words) => ({
+    text: words.map((w) => w[0]).join(''),
+    tokens: words.map((w) => w[0]),
+    timestamps: words.map((w) => w[1]),
+    durations: words.map((w) => w[2] - w[1]),
+  });
+  const lines = (words) => sentenceLines(wordsOf(result(words))).map((l) => l.map((w) => w.text).join('').trim());
+  assert.deepStrictEqual(lines([
+    [' Dobrý', 0, 0.5], [' den', 0.6, 1], [' všem', 1.1, 2], [' tady.', 2.1, 3.5],
+    [' Dnes', 4, 4.5], [' je', 4.6, 5], [' 32.', 5.1, 5.6], [' epizoda', 5.7, 6.5], [' show.', 6.6, 7.5],
+    [' Ano.', 7.6, 8], [' Konec', 8.1, 9], [' a', 9.1, 9.3], [' tečka.', 9.4, 11],
+  ]), ['Dobrý den všem tady.', 'Dnes je 32. epizoda show.', 'Ano. Konec a tečka.'], 'not after "32." (an ordinal)');
+  // too short on one side, or no capital after the full stop: one line
+  assert.deepStrictEqual(lines([[' Ano.', 0, 0.5], [' Dobře', 0.6, 2], [' tak', 2.1, 3], [' jo.', 3.1, 4]]), ['Ano. Dobře tak jo.']);
+  assert.deepStrictEqual(lines([[' Je', 0, 1], [' to', 1.1, 2], [' tak.', 2.1, 3.2], [' a', 3.3, 4], [' dál', 4.1, 5], [' to', 5.1, 6], [' jde.', 6.1, 7]]),
+    ['Je to tak. a dál to jde.']);
+  assert.deepStrictEqual(wordsOf({ text: 'x', tokens: ['x'], timestamps: [], durations: [] }), null, 'no word times');
+});
+
+test('splitting between speakers keeps every word when the next speaker was not recognized', () => {
+  const r = { text: '', tokens: [' A', ' b', ' c', ' d'], timestamps: [0, 1, 2, 3], durations: [0.5, 0.5, 0.5, 0.5] };
+  assert.deepStrictEqual(splitWords(r, [9]), ['A b c d', ''], 'the change lies after the last word');
+  assert.deepStrictEqual(splitWords(r, [2.05]), ['A b', 'C d']);
+});
+
+test('enrolled voices taking turns are cut where one clearly takes over from another', () => {
+  // Each "embedding" names the voice it matches clearly ('A', 'B') or no voice clearly (null).
+  const voices = {
+    identify: (e) => (e.v ? { voiceId: e.v, scores: [{ voiceId: e.v, score: 0.8 }, { voiceId: 'x', score: e.close ? 0.75 : 0.3 }] }
+      : { voiceId: null, scores: [] }),
+  };
+  const session = new TranscriptionSession({ createVad: () => ({}) }, voices);
+  const w = (v, close = false) => ({ v, close });
+  assert.deepStrictEqual(session.voiceChanges([w('A'), w('A'), w('A'), w('B'), w('B')]), [3]);
+  assert.deepStrictEqual(session.voiceChanges([w('A'), w('A'), w(null), w(null), w('B'), w('B')]), [3], 'midway between the voices');
+  assert.deepStrictEqual(session.voiceChanges([w('A'), w('A'), w('B', true), w('A')]), [], 'an unclear window is no change');
+  assert.deepStrictEqual(session.voiceChanges([w('A'), w('B'), w('A'), w('A')]), [1, 2], 'one clear window is enough');
+  assert.deepStrictEqual(session.voiceChanges([w(null), w(null)]), []);
 });
 
 test('voice manager validation and matching', () => {

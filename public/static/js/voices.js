@@ -7,7 +7,7 @@ import { chooseFileLength } from './file-length.js';
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
 let user = null;
-let state = { voices: [], threshold: 0.5, learnFromSpeech: false, ready: false };
+let state = { voices: [], threshold: 0.5, learnFromSpeech: false, vocabulary: [], ready: false };
 let recorder = null; // { rec, target: voiceId | 'test', timer }
 let player = null; // { audio, sampleId }
 let uploadTarget = null;
@@ -35,6 +35,11 @@ function render() {
   $('learn').checked = state.learnFromSpeech;
   $('learn').disabled = user.role !== 'admin';
   $('learn').title = user.role === 'admin' ? '' : t('Only administrators can change this.');
+  // Keep what an administrator is typing; show the saved list otherwise.
+  if (document.activeElement !== $('vocabulary')) $('vocabulary').value = state.vocabulary.join('\n');
+  $('vocabulary').readOnly = user.role !== 'admin';
+  $('vocabulary').title = user.role === 'admin' ? '' : t('Only administrators can change this.');
+  $('vocabulary-save').classList.toggle('hidden', user.role !== 'admin');
 
   const grid = $('grid');
   if (!state.voices.length) {
@@ -275,6 +280,12 @@ $('threshold').addEventListener('input', (e) => {
 });
 $('threshold').addEventListener('change', (e) => {
   run(() => api('/settings/threshold', { method: 'PUT', body: { value: Number(e.target.value) } }), t('Threshold saved.'));
+});
+
+$('vocabulary-save').addEventListener('click', () => {
+  const words = $('vocabulary').value.split('\n');
+  $('vocabulary').blur();
+  run(() => api('/settings/vocabulary', { method: 'PUT', body: { words } }), t('Names and terms saved.'));
 });
 
 $('learn').addEventListener('change', (e) => {

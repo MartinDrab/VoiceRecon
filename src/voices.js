@@ -14,6 +14,14 @@ const { getSetting, setSetting } = require('./db');
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
 const MIN_SPEECH_SECONDS = 1.0;
 const MAX_SAMPLE_SECONDS = 10 * 60;
+const MAX_VOCABULARY = 300; // names and terms the recognizer should prefer
+const MAX_TERM = 60;
+// How strongly the recognizer prefers listed words (per token). On real recordings 1 fixed most
+// misheard words, and 2 also a name that 1 missed, but 2 turned "Byli" into "Jili" for the short
+// voice name "jirka". So voice names, listed automatically, get 1; terms an administrator adds on
+// purpose get 2 (adding a voice's name there too strengthens it).
+const NAME_BOOST = 1;
+const TERM_BOOST = 2;
 
 // Learning from live speech. A live line is learned only when the enrollment recordings alone
 // already identify it clearly, so a wrong match cannot reinforce itself.
@@ -94,6 +102,34 @@ class VoiceManager extends EventEmitter {
     if (typeof enabled !== 'boolean') throw new HttpError(400, 'Expected true or false.');
     setSetting(this.db, 'learnFromSpeech', enabled);
     this.emit('changed');
+  }
+
+  /** Names and terms the recognizer should prefer besides the voices' names (set on the Voices page). */
+  get vocabulary() {
+    return getSetting(this.db, 'vocabulary', []);
+  }
+
+  setVocabulary(words) {
+    if (!Array.isArray(words)) throw new HttpError(400, 'Expected a list of names and terms.');
+    const list = [...new Set(words.map((w) => String(w).replace(/\s+/g, ' ').trim()).filter(Boolean))];
+    if (list.length > MAX_VOCABULARY) throw new HttpError(400, 'At most {max} names and terms.', { max: MAX_VOCABULARY });
+    for (const word of list) {
+      if (word.length > MAX_TERM) throw new HttpError(400, '“{word}” is too long (at most {max} characters).', { word, max: MAX_TERM });
+      if (/[/:]/.test(word)) throw new HttpError(400, '“{word}” may not contain / or :.', { word });
+    }
+    setSetting(this.db, 'vocabulary', list);
+    this.emit('changed');
+  }
+
+  /**
+   * What the recognizer should prefer, for SpeechEngine.setHotwords(): the voices' names and the
+   * vocabulary. A name typed in lower case ("jirka") is also listed capitalized, as it appears in
+   * sentences.
+   * @returns {{ text: string, score: number }[]}
+   */
+  hotwords() {
+    const entries = (list, score) => list.flatMap((p) => [p, p[0].toUpperCase() + p.slice(1)]).map((text) => ({ text, score }));
+    return [...entries(this.summary().map((v) => v.name), NAME_BOOST), ...entries(this.vocabulary, TERM_BOOST)];
   }
 
   list() {

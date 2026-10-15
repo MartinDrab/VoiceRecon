@@ -214,6 +214,11 @@ export default {
     'Řádky rozpoznané velmi jistě doladí hlasy pro vaši místnost a mikrofon. Z oprav na stránce přepisu se hlasy učí vždy.',
   'Voices will learn from clearly recognized live speech.': 'Hlasy se budou učit z jasně rozpoznané živé řeči.',
   'Learning from live speech is off.': 'Učení z živé řeči je vypnuté.',
+  'Names and terms': 'Jména a pojmy',
+  'One per line, e.g. Kyjev': 'Každý na samostatný řádek, např. Kyjev',
+  'The recognizer prefers these words where they fit what was said, e.g. names, places and product names. The voices\' names are included automatically, more lightly; add a name here too if it is still misheard.':
+    'Rozpoznávání dá těmto slovům přednost, když odpovídají tomu, co zaznělo, např. jménům, místům a názvům výrobků. Jména hlasů se přidávají automaticky, ale se slabší předností; pokud se jméno přesto plete, přidejte ho i sem.',
+  'Names and terms saved.': 'Jména a pojmy byly uloženy.',
   'No voices yet.': 'Zatím žádné hlasy.',
   'Create a voice for each person you want recognized, then add a recording of them speaking.':
     'Vytvořte hlas pro každého, koho chcete rozpoznávat, a pak přidejte nahrávku, na které mluví.',
