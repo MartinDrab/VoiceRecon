@@ -82,6 +82,11 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.strictEqual((await fetch(`${base}/api/voices`)).status, 401, 'API requires login');
     // a request without a JSON body gets a validation error, not a server error
     assert.strictEqual((await fetch(`${base}/api/login`, { method: 'POST' })).status, 401);
+    // Behind a reverse proxy on the same computer, the client the proxy names decides, not the socket.
+    const viaProxy = { 'x-forwarded-for': '203.0.113.7', 'content-type': 'application/json' };
+    assert.deepStrictEqual(await (await fetch(`${base}/api/setup`, { headers: viaProxy })).json(), { needed: true, allowed: false });
+    const remoteSetup = await fetch(`${base}/api/setup`, { method: 'POST', headers: viaProxy, body: JSON.stringify({ username: 'intruder', password: 'intruder-pass' }) });
+    assert.strictEqual(remoteSetup.status, 403);
     assert.deepStrictEqual(await call('GET', '/api/setup'), { needed: true, allowed: true });
     await call('POST', '/api/setup', { username: 'admin', password: 'admin-password' });
     await assert.rejects(call('POST', '/api/setup', { username: 'admin2', password: 'admin-password' }), /409/);
@@ -178,6 +183,8 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.strictEqual(saved.lines[0].speaker.voiceId, ids.coqui, 'the live correction reached the saved line');
     assert.deepStrictEqual(saved.lines.slice(1).map((l) => names[l.speaker.voiceId]), expected.slice(1).map((e) => e.voice));
     assert.ok(Math.abs(saved.lines[1].start - finals[1].start) < 0.01);
+    const progress = await call('GET', `/api/transcripts/${transcriptId}?lines=0`);
+    assert.deepStrictEqual([progress.transcript.id, progress.lines], [transcriptId, undefined], 'without its lines');
     assert.strictEqual((await call('GET', '/api/transcripts?q=dovolene')).total, 1, 'search ignores diacritics');
     const srt = await (await fetch(`${base}/api/transcripts/${transcriptId}/export?format=srt`, { headers: { cookie } })).text();
     assert.strictEqual(srt.match(/-->/g).length, expected.length);

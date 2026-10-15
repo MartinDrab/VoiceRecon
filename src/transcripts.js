@@ -282,25 +282,45 @@ class TranscriptStore {
     const titled = this.db.prepare("SELECT id, title FROM transcripts WHERE title <> ''").all()
       .filter((t) => fold(t.title).includes(wanted)).map((t) => t.id);
     const ids = [...new Set([...found, ...titled])];
-    const hits = found.size
-      ? this.db.prepare(`SELECT l.transcript_id AS id, l.id AS lineId,
-            snippet(transcript_lines_fts, 0, '${MARK_START}', '${MARK_END}', '…', 14) AS snippet
-          FROM transcript_lines_fts JOIN transcript_lines l ON l.id = transcript_lines_fts.rowid
-          WHERE transcript_lines_fts MATCH ? AND l.transcript_id IN (${[...found].map(() => '?').join(',')})
-          ORDER BY l.transcript_id DESC, l.start_sec LIMIT 2000`).all(terms.join(' OR '), ...found)
-      : [];
     const rows = ids.length
       ? this.db.prepare(`SELECT * FROM transcripts WHERE id IN (${ids.map(() => '?').join(',')})
           ORDER BY started_at DESC, id DESC`).all(...ids)
       : [];
     const page = rows.slice(offset, offset + limit);
+    const hits = this.searchHits(terms.join(' OR '), page.map((t) => t.id).filter((id) => found.has(id)));
     return {
       total: rows.length,
       transcripts: this.summaries(page).map((t) => {
-        const own = hits.filter((h) => h.id === t.id);
-        return { ...t, hits: own.length, snippets: own.slice(0, 3).map((h) => ({ lineId: h.lineId, text: h.snippet })) };
+        const own = hits.get(t.id);
+        return { ...t, hits: own ? own.count : 0, snippets: own ? own.snippets : [] };
       }),
     };
+  }
+
+  /**
+   * For each of the given transcripts, how many lines match and snippets of the first three:
+   * Map transcript id -> { count, snippets: [{ lineId, text }] }.
+   */
+  searchHits(match, transcriptIds) {
+    const out = new Map();
+    if (!transcriptIds.length) return out;
+    const first = this.db.prepare(`SELECT id, lineId, count FROM (
+        SELECT l.transcript_id AS id, l.id AS lineId, COUNT(*) OVER (PARTITION BY l.transcript_id) AS count,
+          ROW_NUMBER() OVER (PARTITION BY l.transcript_id ORDER BY l.start_sec, l.id) AS n
+        FROM transcript_lines_fts JOIN transcript_lines l ON l.id = transcript_lines_fts.rowid
+        WHERE transcript_lines_fts MATCH ? AND l.transcript_id IN (${transcriptIds.map(() => '?').join(',')})
+      ) WHERE n <= 3 ORDER BY id, n`).all(match, ...transcriptIds);
+    if (!first.length) return out;
+    // Snippets only for the lines shown.
+    const snippets = new Map(this.db.prepare(`SELECT rowid AS lineId,
+        snippet(transcript_lines_fts, 0, '${MARK_START}', '${MARK_END}', '…', 14) AS snippet
+      FROM transcript_lines_fts WHERE transcript_lines_fts MATCH ? AND rowid IN (${first.map(() => '?').join(',')})`)
+      .all(match, ...first.map((r) => r.lineId)).map((r) => [r.lineId, r.snippet]));
+    for (const r of first) {
+      if (!out.has(r.id)) out.set(r.id, { count: r.count, snippets: [] });
+      out.get(r.id).snippets.push({ lineId: r.lineId, text: snippets.get(r.lineId) || '' });
+    }
+    return out;
   }
 
   title(t, lang = 'en') {

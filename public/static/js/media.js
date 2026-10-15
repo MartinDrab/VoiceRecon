@@ -14,7 +14,7 @@ const QUEUE = 64; // encoded frames waiting in the decoder at most
 
 /**
  * @typedef {object} AudioFile
- * @property {number | null} duration in seconds; null until read() for formats decoded whole
+ * @property {number} duration in seconds
  * @property {(limit: number, onProgress?: (fraction: number) => void, signal?: AbortSignal) =>
  *   Promise<{ wav: Blob, seconds: number }>} read the first `limit` seconds (Infinity: all) as a
  *   16 kHz mono WAV, and the whole file's length
@@ -33,7 +33,8 @@ export async function openAudioFile(file) {
     const track = await mp4Track(file);
     if (track && (await decodable(track))) return mp4Reader(file, track);
   }
-  return wholeReader(file);
+  // Other formats: their length is known only once the browser has decoded them, so now.
+  return wholeReader(await decodeFile(file));
 }
 
 /** 16 kHz samples as they are converted, up to a limit; then a WAV file. */
@@ -201,6 +202,7 @@ function mp4Reader(file, track) {
           while (j < last && offsets[j] === to && to - from < SLICE) to += sizes[j++];
           if (j === i) to = from + sizes[j++];
           const bytes = new Uint8Array(await file.slice(from, to).arrayBuffer());
+          if (failure) break; // the decoder failed (and closed) while the file was read
           for (let k = i; k < j; k++) {
             const at = offsets[k] - from;
             decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: Math.round(starts[k] * 1e6), data: bytes.subarray(at, at + sizes[k]) }));
@@ -210,10 +212,15 @@ function mp4Reader(file, track) {
           if (onProgress) onProgress(Math.min(1, starts[i - 1] / until));
         }
         if (!failure) await decoder.flush();
+      } catch (err) {
+        if (signal && signal.aborted) throw err;
+        // decode() on a decoder that has just failed, a rejected flush(), a file that changed on
+        // disk: all mean that the file cannot be read.
+        failure = failure || err;
       } finally {
         if (decoder.state !== 'closed') decoder.close();
       }
-      if (failure) throw new Error(t('"{name}" could not be read.', { name: file.name }));
+      if (failure) throw new Error(t('"{name}" could not be read.', { name: file.name }), { cause: failure });
       if (resampler) out.push(resampler.flush());
       return { wav: out.blob(), seconds: track.duration };
     },
@@ -223,26 +230,27 @@ function mp4Reader(file, track) {
 /** Until the decoder has taken frames off its queue (some browsers lack the event: then 50 ms). */
 function dequeued(decoder) {
   return new Promise((resolve) => {
-    decoder.addEventListener('dequeue', resolve, { once: true });
-    setTimeout(resolve, 50);
+    const done = () => {
+      clearTimeout(timer);
+      decoder.removeEventListener('dequeue', done);
+      resolve();
+    };
+    const timer = setTimeout(done, 50);
+    decoder.addEventListener('dequeue', done);
   });
 }
 
 // ---------- other formats: decoded whole ----------
 
-function wholeReader(file) {
-  let pcm = null;
-  const reader = {
-    duration: null,
+/** @param {Int16Array<ArrayBuffer>} pcm the whole file, decoded */
+function wholeReader(pcm) {
+  const duration = pcm.length / SAMPLE_RATE;
+  return {
+    duration,
     async read(limit, onProgress) {
-      if (!pcm) {
-        pcm = await decodeFile(file);
-        reader.duration = pcm.length / SAMPLE_RATE;
-      }
       const n = Number.isFinite(limit) ? Math.min(pcm.length, Math.round(limit * SAMPLE_RATE)) : pcm.length;
       if (onProgress) onProgress(1);
-      return { wav: wavBlob([pcm.subarray(0, n)], SAMPLE_RATE), seconds: reader.duration };
+      return { wav: wavBlob([pcm.subarray(0, n)], SAMPLE_RATE), seconds: duration };
     },
   };
-  return reader;
 }

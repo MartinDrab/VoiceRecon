@@ -17,6 +17,9 @@ let editing = null; // id of the line whose text is being edited
 let picking = null; // { lineIds, key, name } for the speaker dialog
 let pollTimer = null;
 let stopping = false; // the user stopped the transcription of the file
+let linesLoadedAt = 0;
+const PROGRESS_POLL_MS = 2000; // while a file is transcribed: its progress this often,
+const LINES_POLL_MS = 10000; // and its new lines this often (a long file has thousands)
 
 const isLive = () => Boolean(transcript && transcript.recording);
 const isProcessing = () => Boolean(transcript && transcript.processing && transcript.processing.state !== 'failed');
@@ -31,6 +34,7 @@ async function load({ onlyIfChanged = false } = {}) {
   transcript = tr.transcript;
   lines = tr.lines;
   voices = v.voices;
+  linesLoadedAt = Date.now();
   if (changed || !onlyIfChanged) {
     renderHeader();
     renderLines();
@@ -46,7 +50,7 @@ async function load({ onlyIfChanged = false } = {}) {
   if (wasProcessing && !transcript.processing && !stopping) toast(t('The recording is transcribed.'));
   clearTimeout(pollTimer);
   // While the transcript is still being recorded or transcribed, keep it up to date.
-  if (isLive()) pollTimer = setTimeout(poll, isProcessing() ? 2000 : 5000);
+  if (isLive()) pollTimer = setTimeout(poll, isProcessing() ? PROGRESS_POLL_MS : 5000);
 }
 
 function poll() {
@@ -54,9 +58,25 @@ function poll() {
     pollTimer = setTimeout(poll, 5000);
     return;
   }
-  load({ onlyIfChanged: true }).catch(() => {
+  (isProcessing() ? pollProgress() : load({ onlyIfChanged: true })).catch(() => {
     pollTimer = setTimeout(poll, 10000);
   });
+}
+
+/** While a file is transcribed: the progress without the lines, which are loaded less often. */
+async function pollProgress() {
+  const { transcript: tr } = await api(`/transcripts/${tid}?lines=0`);
+  const finished = !tr.recording || !tr.processing || tr.processing.state === 'failed';
+  const newLines = tr.updatedAt !== transcript.updatedAt;
+  if (finished || (newLines && Date.now() - linesLoadedAt >= LINES_POLL_MS)) {
+    await load({ onlyIfChanged: true });
+    return;
+  }
+  // Only the progress is shown as it is now; the rest still matches the lines on the page.
+  transcript = { ...transcript, processing: tr.processing };
+  renderHeader();
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(poll, PROGRESS_POLL_MS);
 }
 
 function renderHeader() {

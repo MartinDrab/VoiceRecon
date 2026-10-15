@@ -4,7 +4,7 @@ import {
 import { LANGUAGES } from './i18n.js';
 import { transcribeFile } from './transcribe-file.js';
 import {
-  MicCapture, wavFromInt16, SAMPLE_RATE, listMicrophones, preferredMicrophone, setPreferredMicrophone,
+  MicCapture, wavBlob, SAMPLE_RATE, listMicrophones, preferredMicrophone, setPreferredMicrophone,
 } from './audio.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
@@ -240,13 +240,7 @@ function discardAudio() {
 }
 
 function downloadAudio() {
-  const pcm = new Int16Array(keptSamples);
-  let o = 0;
-  for (const c of kept) {
-    pcm.set(c, o);
-    o += c.length;
-  }
-  saveFile(wavFromInt16(pcm, SAMPLE_RATE), 'recording', 'wav');
+  saveFile(wavBlob(kept, SAMPLE_RATE), 'recording', 'wav');
 }
 
 function renderAudioMenu() {

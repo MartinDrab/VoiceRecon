@@ -146,8 +146,6 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
       for (const r of rows) {
         try {
           const audio = await openAudioFile(r.file);
-          // Formats the browser decodes whole: their length is known only after decoding.
-          if (audio.duration === null) await audio.read(Infinity, undefined, controller.signal);
           r.audio = audio;
           r.status.textContent = formatClock(audio.duration);
         } catch (err) {

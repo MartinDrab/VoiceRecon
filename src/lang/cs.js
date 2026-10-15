@@ -54,6 +54,7 @@ module.exports = {
   'No transcription is running.': 'Žádný přepis neběží.',
   'Choose a voice.': 'Vyberte hlas.',
   'That speaker is no longer available in this session.': 'Tento mluvčí už v této relaci není k dispozici.',
+  'That speaker is being saved as a new voice.': 'Tento mluvčí se právě ukládá jako nový hlas.',
 
   // saved transcripts
   'Transcript not found.': 'Přepis nebyl nalezen.',

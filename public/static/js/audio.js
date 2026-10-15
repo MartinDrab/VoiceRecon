@@ -123,14 +123,7 @@ export class MicRecorder {
 
   async stop() {
     await this.capture.stop();
-    const total = this.chunks.reduce((n, c) => n + c.length, 0);
-    const pcm = new Int16Array(total);
-    let o = 0;
-    for (const c of this.chunks) {
-      pcm.set(c, o);
-      o += c.length;
-    }
-    return wavFromInt16(pcm, SAMPLE_RATE);
+    return wavBlob(this.chunks, SAMPLE_RATE);
   }
 }
 
@@ -139,7 +132,7 @@ export class MicRecorder {
  * The browser decodes the whole file at its own rate first, so long recordings run out of memory
  * (a 2-hour M4A failed); media.js reads MP4/M4A and WAV files piece by piece instead.
  * @param {File} file
- * @returns {Promise<Int16Array>}
+ * @returns {Promise<Int16Array<ArrayBuffer>>}
  */
 export async function decodeFile(file) {
   let decoded;
@@ -160,10 +153,6 @@ export async function decodeFile(file) {
     pcm[i] = Math.round(s < 0 ? s * 32768 : s * 32767);
   }
   return pcm;
-}
-
-export function wavFromInt16(pcm, rate) {
-  return wavBlob([pcm], rate);
 }
 
 /**

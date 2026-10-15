@@ -126,18 +126,19 @@ class Auth {
    * @param {{ keepToken?: string }} [options] keepToken: the session that stays signed in
    */
   async updateUser(id, { password, role }, { keepToken } = {}) {
+    // Everything is checked before anything is written, so a rejected change changes nothing.
+    if (!this.getUser(id)) throw new HttpError(404, 'User not found.');
+    if (role !== undefined) validateRole(role);
+    if (password !== undefined) validatePassword(password);
+    const hash = password !== undefined ? await hashPassword(password) : null;
+    // Checked again after hashing, and then written with no await in between.
     const user = this.getUser(id);
     if (!user) throw new HttpError(404, 'User not found.');
-    if (role !== undefined) {
-      validateRole(role);
-      if (user.role === 'admin' && role !== 'admin' && this.countAdmins() <= 1) {
-        throw new HttpError(400, 'The last administrator cannot be demoted.');
-      }
-      this.db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+    if (role !== undefined && user.role === 'admin' && role !== 'admin' && this.countAdmins() <= 1) {
+      throw new HttpError(400, 'The last administrator cannot be demoted.');
     }
-    if (password !== undefined) {
-      validatePassword(password);
-      const hash = await hashPassword(password);
+    if (role !== undefined) this.db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+    if (hash !== null) {
       this.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
       // A password change signs the user out everywhere except the current browser.
       this.db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(id, keepToken ? sha256(keepToken) : '');

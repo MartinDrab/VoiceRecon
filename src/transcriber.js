@@ -483,6 +483,9 @@ class TranscriptionSession extends EventEmitter {
   assignUnknown(unknownId, voiceId) {
     const u = this.unknown.find((x) => x.id === unknownId);
     if (!u) throw new Error('That speaker is no longer available in this session.');
+    // Saving as a new voice relabels the lines when it is done; assigning now would give the same
+    // person two voices.
+    if (u.saving) throw new Error('That speaker is being saved as a new voice.');
     this.voices.learnCorrections(voiceId, [{ embedding: u.centroid, seconds: u.audioLen / SAMPLE_RATE }]);
     this.unknown = this.unknown.filter((x) => x !== u);
     const to = { kind: 'voice', id: voiceId, score: 1 };

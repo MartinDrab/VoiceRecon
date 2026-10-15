@@ -13,6 +13,12 @@ try {
   if (err.code !== 'ENOENT') throw err;
 }
 
+/** A path setting; relative paths count from the project folder (where .env is), not from the
+ * folder the server happens to be started in. */
+function pathSetting(name, fallback = '') {
+  return path.resolve(root, process.env[name] || fallback);
+}
+
 function num(name, fallback) {
   const v = process.env[name];
   if (v === undefined || v === '') return fallback;
@@ -21,7 +27,7 @@ function num(name, fallback) {
   return n;
 }
 
-const modelsDir = path.resolve(process.env.MODELS_DIR || path.join(root, 'models'));
+const modelsDir = pathSetting('MODELS_DIR', 'models');
 const asrDir = path.join(modelsDir, 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8');
 const asr = {
   encoder: path.join(asrDir, 'encoder.int8.onnx'),
@@ -36,9 +42,9 @@ module.exports = {
   root,
   host: process.env.HOST || '127.0.0.1',
   port: num('PORT', 3000),
-  tlsCert: process.env.TLS_CERT || '',
-  tlsKey: process.env.TLS_KEY || '',
-  dataDir: path.resolve(process.env.DATA_DIR || path.join(root, 'data')),
+  tlsCert: process.env.TLS_CERT ? pathSetting('TLS_CERT') : '',
+  tlsKey: process.env.TLS_KEY ? pathSetting('TLS_KEY') : '',
+  dataDir: pathSetting('DATA_DIR', 'data'),
   modelsDir,
   sessionTtlHours: num('SESSION_TTL_HOURS', 24 * 7),
 

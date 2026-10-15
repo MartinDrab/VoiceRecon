@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const { decodeWav, encodeWav, int16ToFloat } = require('../src/audio');
 const { openDatabase, getSetting, setSetting } = require('../src/db');
@@ -87,6 +88,8 @@ test('users, sessions and administrator safeguards', async () => {
   assert.throws(() => auth.deleteUser(admin.id), /last administrator/);
 
   const other = await auth.createUser({ username: 'pat', password: 'password2', role: 'user' });
+  await assert.rejects(auth.updateUser(other.id, { role: 'admin', password: 'short' }), /Password/);
+  assert.strictEqual(auth.getUser(other.id).role, 'user', 'a rejected change changes nothing');
   const s1 = (await auth.login('pat', 'password2', '1.2.3.4')).token;
   const s2 = (await auth.login('pat', 'password2', '1.2.3.4')).token;
   await auth.updateUser(other.id, { password: 'password3' }, { keepToken: s1 });
@@ -246,6 +249,17 @@ test('transcription session never throws errors after it is closed', async () =>
   }
 });
 
+test('relative paths in the settings count from the project folder', () => {
+  const root = path.join(__dirname, '..');
+  const script = `const c = require(${JSON.stringify(path.join(root, 'src', 'config.js'))}); console.log(JSON.stringify([c.dataDir, c.tlsCert]));`;
+  const out = execFileSync(process.execPath, ['-e', script], {
+    cwd: os.tmpdir(),
+    env: { ...process.env, DATA_DIR: 'some-data', TLS_CERT: 'certs/cert.pem' },
+    encoding: 'utf8',
+  });
+  assert.deepStrictEqual(JSON.parse(out), [path.join(root, 'some-data'), path.join(root, 'certs', 'cert.pem')]);
+});
+
 test('settings are stored as JSON', () => {
   const db = openDatabase(tmp());
   assert.strictEqual(getSetting(db, 'x', 0.4), 0.4);
@@ -370,6 +384,7 @@ test('saving an unknown speaker waits for its voice print, once, and undoes the 
   fail = false;
   const saving = session.saveUnknown('u1', { name: 'Eva', color: '#ff0000' });
   await assert.rejects(session.saveUnknown('u1', { name: 'Eva', color: '#ff0000' }), /no longer available/, 'a second click while saving');
+  assert.throws(() => session.assignUnknown('u1', 7), /being saved/, 'no second voice for the same person');
   assert.strictEqual(await saving, 2);
   assert.deepStrictEqual(session.unknown, []);
   assert.deepStrictEqual(messages, [{ type: 'relabel', from: { kind: 'unknown', id: 'u1', label: 'Speaker 1' }, to: { kind: 'voice', id: 2, score: 1 } }]);

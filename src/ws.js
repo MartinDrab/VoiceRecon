@@ -78,8 +78,10 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       send({ type: 'error', message: tr(err) });
     };
 
-    // The saved transcript this connection writes to. offset maps session times to transcript times.
-    const live = { transcriptId: null, offset: 0, sessionNo: 1, lineIds: new Map() };
+    // The saved transcript this connection writes to. offset maps session times to transcript times;
+    // no line starts before floor, the transcript time at which this connection began writing to it.
+    const live = { transcriptId: null, offset: 0, floor: 0, sessionNo: 1, lineIds: new Map() };
+    let toldLoading = false; // audio arrived while the models were loading, and the client was told
 
     const setTranscript = (id) => {
       transcripts.setRecording(live.transcriptId, false);
@@ -94,6 +96,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       setTranscript(t.id);
       live.sessionNo = t.sessions;
       live.offset = t.duration + 1 - (session ? session.audioSeconds : 0);
+      live.floor = t.duration + 1;
       live.lineIds.clear();
       send({ type: 'transcript', id: t.id });
     };
@@ -108,9 +111,12 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
 
     const saveFinal = (m) => {
       const recent = session.recent.get(m.id) || {};
+      // An utterance that began before a new transcript was started (or this one resumed) belongs
+      // to it from its beginning.
+      const start = Math.max(live.floor, m.start + live.offset);
       const line = {
-        start: m.start + live.offset,
-        end: m.end + live.offset,
+        start,
+        end: Math.max(start, m.end + live.offset),
         spokenAt: Date.now() - Math.max(0, session.audioSeconds - m.start) * 1000,
         speaker: transcripts.speakerFields(m.speaker, live.sessionNo),
         text: m.text,
@@ -149,10 +155,15 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       }
     };
 
-    const ensureSession = () => {
+    /** @param {{ audio?: boolean }} [options] audio: for audio, which arrives 10 times a second */
+    const ensureSession = ({ audio = false } = {}) => {
       if (session) return session;
       if (!engine.ready) {
-        send({ type: 'error', message: tr({ message: 'Speech models are still loading. Try again in a moment.' }) });
+        // Audio that arrives meanwhile is dropped; one message for it is enough.
+        if (!audio || !toldLoading) {
+          send({ type: 'error', message: tr({ message: 'Speech models are still loading. Try again in a moment.' }) });
+        }
+        if (audio) toldLoading = true;
         return null;
       }
       session = new TranscriptionSession(engine, voices);
@@ -178,7 +189,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
 
     function onMessage(data, isBinary) {
       if (isBinary) {
-        const s = ensureSession();
+        const s = ensureSession({ audio: true });
         if (s) s.push(int16ToFloat(data));
         return;
       }
@@ -196,6 +207,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       } else if (msg.type === 'newTranscript') {
         setTranscript(null);
         live.offset = -(session ? session.audioSeconds : 0);
+        live.floor = 0;
         live.lineIds.clear();
         send({ type: 'transcript', id: null });
       } else if (msg.type === 'stop') {

@@ -134,7 +134,8 @@ TLS_KEY=data/key.pem
 | `SESSION_TTL_HOURS` | `168` | How long a login lasts |
 | `VOICERECON_DEBUG` | — | `1` logs every utterance and saves its audio to `%TEMP%/voicerecon-debug` |
 
-Keep the full path of `DATA_DIR` reasonably short on Windows: SQLite cannot open a database whose
+Relative paths (`DATA_DIR`, `MODELS_DIR`, `TLS_CERT`, `TLS_KEY`) count from the project folder,
+wherever the server is started from. Keep the full path of `DATA_DIR` reasonably short on Windows: SQLite cannot open a database whose
 path is longer than 260 characters.
 
 ## How the transcription works

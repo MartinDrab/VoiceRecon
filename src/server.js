@@ -89,13 +89,18 @@ const wavBody = (req) => {
   return req.body;
 };
 
+// "From this computer": req.ip, not the socket's address. Behind a reverse proxy on the same
+// computer every connection comes from 127.0.0.1; req.ip is the client the proxy names in
+// X-Forwarded-For ('trust proxy' above trusts that header only from loopback addresses).
+const fromThisComputer = (req) => isLoopback(req.ip);
+
 api.get('/setup', (req, res) => {
-  res.json({ needed: auth.countUsers() === 0, allowed: isLoopback(req.socket.remoteAddress) });
+  res.json({ needed: auth.countUsers() === 0, allowed: fromThisComputer(req) });
 });
 
 api.post('/setup', json, async (req, res) => {
   if (auth.countUsers() > 0) throw new HttpError(409, 'The application is already set up.');
-  if (!isLoopback(req.socket.remoteAddress)) {
+  if (!fromThisComputer(req)) {
     throw new HttpError(403, 'The first administrator can only be created from the computer running VoiceRecon.');
   }
   const u = await auth.createUser(
@@ -231,9 +236,11 @@ api.post('/transcripts/:id/stop', user, async (req, res) => {
   if (!t) throw new HttpError(403, 'Only the author or an administrator can stop this transcription.');
   res.json({ stopped: await uploads.cancel(t.id) });
 });
+// ?lines=0: the transcript without its lines (the History page polls the progress of uploads).
 api.get('/transcripts/:id', user, (req, res) => {
   const tid = id(req.params.id);
-  res.json({ transcript: transcripts.summary(tid), lines: transcripts.lines(tid) });
+  const transcript = transcripts.summary(tid);
+  res.json(req.query.lines === '0' ? { transcript } : { transcript, lines: transcripts.lines(tid) });
 });
 api.patch('/transcripts/:id', user, json, (req, res) => {
   transcripts.rename(id(req.params.id), req.body.title);

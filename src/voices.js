@@ -57,6 +57,7 @@ class VoiceManager extends EventEmitter {
     this.recordingsDir = path.join(dataDir, 'recordings');
     this.defaultThreshold = defaultThreshold;
     this.prints = new Map(); // voiceId -> { enrolled: Float32Array[], learned: Float32Array | null }
+    this.settings = new Map(); // settings read on every line, kept after the first read
   }
 
   /** Call once the speech engine is loaded. Re-embeds samples made with a different speaker model. */
@@ -80,25 +81,36 @@ class VoiceManager extends EventEmitter {
     for (const { id } of this.db.prepare('SELECT id FROM voices').all()) this.refreshPrints(id);
   }
 
+  /** A setting read for every line; only the setters here change it, so it is read once. */
+  kept(key, fallback) {
+    if (!this.settings.has(key)) this.settings.set(key, getSetting(this.db, key, fallback));
+    return this.settings.get(key);
+  }
+
+  keep(key, value) {
+    setSetting(this.db, key, value);
+    this.settings.set(key, value);
+  }
+
   get threshold() {
-    return getSetting(this.db, 'speakerThreshold', this.defaultThreshold);
+    return this.kept('speakerThreshold', this.defaultThreshold);
   }
 
   setThreshold(value) {
     const v = Number(value);
     if (!Number.isFinite(v) || v < 0.05 || v > 0.95) throw new HttpError(400, 'Threshold must be between 0.05 and 0.95.');
-    setSetting(this.db, 'speakerThreshold', Math.round(v * 100) / 100);
+    this.keep('speakerThreshold', Math.round(v * 100) / 100);
     this.emit('changed');
   }
 
   /** Whether confidently matched live lines are added to voice prints (corrections always are). */
   get learnFromSpeech() {
-    return getSetting(this.db, 'learnFromSpeech', false);
+    return this.kept('learnFromSpeech', false);
   }
 
   setLearnFromSpeech(enabled) {
     if (typeof enabled !== 'boolean') throw new HttpError(400, 'Expected true or false.');
-    setSetting(this.db, 'learnFromSpeech', enabled);
+    this.keep('learnFromSpeech', enabled);
     this.emit('changed');
   }
 

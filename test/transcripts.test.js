@@ -92,6 +92,26 @@ test('search ignores case and diacritics and returns marked snippets', () => {
   db.close();
 });
 
+test('search counts and shows the matching lines of each transcript on the page', () => {
+  const { db, store } = setup();
+  const speaker = { voiceId: null, key: '?', label: '?' };
+  const now = Date.now();
+  // Uploaded files are dated when they were recorded, so the newest transcript need not be the last made.
+  const ids = [3, 1, 2].map((daysAgo) => store.create(1, { startedAt: now - daysAgo * 86400000 }).id);
+  ids.forEach((tid, n) => {
+    for (let i = 0; i < 5 + n; i++) {
+      store.appendLine(tid, { start: i, end: i + 1, spokenAt: now, speaker, text: `Bod ${i}: rozpočet.` });
+    }
+  });
+  const first = store.list({ q: 'rozpoc', limit: 2 });
+  assert.strictEqual(first.total, 3);
+  assert.deepStrictEqual(first.transcripts.map((t) => [t.id, t.hits, t.snippets.length]), [[ids[1], 6, 3], [ids[2], 7, 3]]);
+  assert.deepStrictEqual(first.transcripts[0].snippets.map((s) => s.text), [0, 1, 2].map((i) => `Bod ${i}: rozpočet.`));
+  const second = store.list({ q: 'rozpoc', limit: 2, offset: 2 });
+  assert.deepStrictEqual(second.transcripts.map((t) => [t.id, t.hits]), [[ids[0], 5]]);
+  db.close();
+});
+
 test('editing, moving and deleting lines keeps search up to date', () => {
   const { db, voices, store, jirka, klara } = setup();
   const t = store.create(1);
