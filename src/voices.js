@@ -142,6 +142,10 @@ class VoiceManager extends EventEmitter {
     return Number(lastInsertRowid);
   }
 
+  /**
+   * @param {number} id
+   * @param {{ name?: string, color?: string }} changes
+   */
   update(id, { name, color }) {
     this.get(id);
     if (name !== undefined) this.db.prepare('UPDATE voices SET name = ? WHERE id = ?').run(validateName(name), id);

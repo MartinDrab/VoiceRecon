@@ -20,12 +20,14 @@ const WebSocket = require('ws');
 const config = require('../src/config');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
-const haveModels = fs.existsSync(config.asr.encoder) && fs.existsSync(path.join(FIXTURES, 'reference.txt'));
+// Skipped without models and test audio, unless VOICERECON_REQUIRE_MODELS=1 (nightly CI): then it fails.
+const haveModels = process.env.VOICERECON_REQUIRE_MODELS === '1'
+  || (fs.existsSync(config.asr.encoder) && fs.existsSync(path.join(FIXTURES, 'reference.txt')));
 
 function freePort() {
   return new Promise((resolve) => {
     const srv = net.createServer().listen(0, '127.0.0.1', () => {
-      const { port } = srv.address();
+      const { port } = /** @type {import('net').AddressInfo} */ (srv.address());
       srv.close(() => resolve(port));
     });
   });
@@ -57,7 +59,9 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
   try {
     // wait until the models are loaded
     for (let i = 0; !log.includes('Speech models ready'); i++) {
-      if (i > 600 || server.exitCode !== null) throw new Error(`Server did not start:\n${log}`);
+      if (i > 600 || server.exitCode !== null || log.includes('models failed to load')) {
+        throw new Error(`Server did not start:\n${log}`);
+      }
       await new Promise((r) => setTimeout(r, 100));
     }
 
@@ -70,7 +74,7 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
       });
       const set = res.headers.get('set-cookie');
       if (set) cookie = set.split(';')[0];
-      const data = await res.json();
+      const data = /** @type {any} */ (await res.json());
       if (!res.ok) throw new Error(`${method} ${url}: ${res.status} ${data.error}`);
       return data;
     };

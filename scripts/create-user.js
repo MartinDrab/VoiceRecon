@@ -16,7 +16,8 @@ const { Auth } = require('../src/auth');
 
 function ask(question) {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    // _writeToOutput (not public API) masks the typed password with '*'.
+    const rl = /** @type {any} */ (readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true }));
     rl._writeToOutput = (s) => rl.output.write(s.startsWith(question) ? s : '*'.repeat(s.length ? 1 : 0));
     rl.question(question, (answer) => {
       rl.output.write('\n');
@@ -40,7 +41,7 @@ async function main() {
   const auth = new Auth(db, { sessionTtlHours: config.sessionTtlHours, secureCookies: false });
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (existing) {
-    const u = await auth.updateUser(existing.id, { password, role: roleFlag });
+    const u = await auth.updateUser(Number(existing.id), { password, role: roleFlag });
     console.log(`Updated ${username} (${u.role}); the user was signed out everywhere.`);
   } else {
     const u = await auth.createUser({ username, password, role: roleFlag || 'user' });

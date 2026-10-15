@@ -1,0 +1,19 @@
+{
+  // Type checking of the server, scripts and tests (plain JavaScript, nothing is compiled).
+  // The pages have their own config in public/tsconfig.json. Run both: npm run typecheck
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "strict": false,
+    "noImplicitThis": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.js", "src/**/*.d.ts", "scripts/**/*.js", "test/**/*.js", "eslint.config.js"]
+}

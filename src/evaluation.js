@@ -29,7 +29,7 @@ const TURN_RE = /^([^:.,!?]{1,40}):\s*(.*)$/u;
  */
 function parseReference(text) {
   const turns = [];
-  String(text).replace(/^﻿/, '').split(/\r?\n/).forEach((raw, i) => {
+  String(text).replace(/^\uFEFF/, '').split(/\r?\n/).forEach((raw, i) => {
     const line = raw.trim().replace(/^\[[^\]]*\]\s*/, '');
     if (!line || line.startsWith('#')) return;
     const m = TURN_RE.exec(line);

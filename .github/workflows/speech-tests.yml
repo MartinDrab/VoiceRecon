@@ -1,0 +1,63 @@
+# Nightly (and on demand): downloads the speech models, generates the synthetic Czech test
+# conversation and runs every test including the end-to-end speech tests, then publishes an
+# accuracy report. Too slow and too large (~650 MB of models) for every push.
+name: Speech tests
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  speech:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Fail instead of skipping when the models or test audio are missing.
+      VOICERECON_REQUIRE_MODELS: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Cache speech models
+        uses: actions/cache@v6
+        with:
+          path: models
+          key: speech-models-${{ hashFiles('scripts/download-models.js') }}
+
+      - name: Download models
+        run: npm run models -- --test
+
+      - name: Generate the test conversation
+        run: node scripts/make-test-audio.js
+
+      - name: All tests
+        run: npm test
+
+      - name: Accuracy report
+        run: |
+          npm run evaluate -- test/fixtures --threshold 0.3,0.4,0.5 --learn 0,1 \
+            --details evaluation-details.txt --json evaluation.json | tee evaluation.txt
+          {
+            echo '### Accuracy on the synthetic test conversation'
+            echo '```'
+            cat evaluation.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evaluation
+          path: |
+            evaluation.txt
+            evaluation.json
+            evaluation-details.txt
+          if-no-files-found: ignore

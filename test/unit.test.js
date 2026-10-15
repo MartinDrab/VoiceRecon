@@ -143,7 +143,8 @@ test('first-run setup cannot create two administrators concurrently', async () =
 test('speech engine queue: finals before interims, cancel drops queued jobs', async () => {
   const engine = new SpeechEngine({});
   const order = [];
-  let release;
+  /** @type {(value?: unknown) => void} */
+  let release = () => {};
   const gate = new Promise((r) => {
     release = r;
   });

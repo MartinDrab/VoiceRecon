@@ -37,7 +37,7 @@ const ENROLL = {
   ],
 };
 
-// [voice, text, pause after in seconds]
+/** @type {[voice: string, text: string, pauseAfterSeconds: number][]} */
 const DIALOGUE = [
   ['jirka', 'Ahoj, jak se máš? Dlouho jsme se neviděli.', 0.7],
   ['coqui', 'Ahoj, mám se dobře, děkuji. Právě jsem se vrátila z dovolené.', 0.6],

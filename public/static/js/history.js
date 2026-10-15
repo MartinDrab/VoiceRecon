@@ -1,6 +1,7 @@
 import { api, h, toast, initPage, formatDuration, formatDateTime, transcriptTitle, snippetNodes, speakerColor } from './common.js';
 
-const $ = (id) => document.getElementById(id);
+/** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
+const $ = (id) => /** @type {any} */ (document.getElementById(id));
 const PAGE = 30;
 let query = new URLSearchParams(location.search).get('q') || '';
 let shown = [];
@@ -41,7 +42,7 @@ function render() {
 
 async function load({ append = false } = {}) {
   const no = ++requestNo;
-  const params = new URLSearchParams({ limit: PAGE, offset: append ? shown.length : 0 });
+  const params = new URLSearchParams({ limit: String(PAGE), offset: String(append ? shown.length : 0) });
   if (query) params.set('q', query);
   try {
     const r = await api(`/transcripts?${params}`);

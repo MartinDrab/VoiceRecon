@@ -1,6 +1,7 @@
 import { api, h, icon, toast, initPage } from './common.js';
 
-const $ = (id) => document.getElementById(id);
+/** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
+const $ = (id) => /** @type {any} */ (document.getElementById(id));
 let me = null;
 let resetting = null;
 

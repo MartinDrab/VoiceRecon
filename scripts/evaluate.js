@@ -80,7 +80,7 @@ function readWav(file) {
   try {
     return decodeWav(fs.readFileSync(file));
   } catch (err) {
-    throw new Error(`${file}: ${err.message} (convert other formats to WAV first, e.g. in Audacity)`);
+    throw new Error(`${file}: ${err.message} (convert other formats to WAV first, e.g. in Audacity)`, { cause: err });
   }
 }
 
@@ -108,7 +108,7 @@ function appVoices() {
   try {
     const rows = db.prepare('SELECT v.name, s.file FROM voices v JOIN voice_samples s ON s.voice_id = v.id ORDER BY v.name, s.id').all();
     return {
-      voices: rows.map((r) => ({ name: r.name, file: path.join(config.dataDir, 'recordings', r.file) })),
+      voices: rows.map((r) => ({ name: r.name, file: path.join(config.dataDir, 'recordings', String(r.file)) })),
       threshold: getSetting(db, 'speakerThreshold', config.speakerThreshold),
       learnFromSpeech: getSetting(db, 'learnFromSpeech', false),
     };

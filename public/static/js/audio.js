@@ -2,16 +2,52 @@
 
 export const SAMPLE_RATE = 16000;
 
+const MIC_KEY = 'voicerecon.microphone';
+const PROCESSING = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+
+/** The microphone chosen by the user as { id, label }, or null for the system default. */
+export function preferredMicrophone() {
+  try {
+    const v = JSON.parse(localStorage.getItem(MIC_KEY) || 'null');
+    return v && typeof v.id === 'string' && v.id ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remembers a microphone (a MediaDeviceInfo) for all pages of this browser; null = system default. */
+export function setPreferredMicrophone(device) {
+  try {
+    if (device) localStorage.setItem(MIC_KEY, JSON.stringify({ id: device.deviceId, label: device.label }));
+    else localStorage.removeItem(MIC_KEY);
+  } catch { /* storage unavailable: the choice lasts until the page is closed */ }
+}
+
+/**
+ * Audio inputs of this computer. Browsers hide their names until microphone access has been
+ * allowed once. The "default" and "communications" entries some browsers add are left out:
+ * they are aliases of real devices, and "System default" is always offered separately.
+ */
+export async function listMicrophones() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+  const all = await navigator.mediaDevices.enumerateDevices();
+  return all.filter((d) => d.kind === 'audioinput' && d.deviceId && !['default', 'communications'].includes(d.deviceId));
+}
+
 /**
  * Captures the microphone and delivers 100 ms chunks of 16 kHz mono Int16 PCM.
- * onChunk(Int16Array), onLevel(rms 0..1)
+ * onChunk(Int16Array), onLevel(rms 0..1). Uses the preferred microphone when it is connected,
+ * otherwise the system default (then fellBack is true). label is the name of the device in use.
  */
 export class MicCapture {
+  /** @param {{ onChunk?: (pcm: Int16Array) => void, onLevel?: (rms: number) => void }} [handlers] */
   constructor({ onChunk, onLevel } = {}) {
     this.onChunk = onChunk;
     this.onLevel = onLevel;
     this.ctx = null;
     this.stream = null;
+    this.label = '';
+    this.fellBack = false;
   }
 
   static supported() {
@@ -24,9 +60,19 @@ export class MicCapture {
         ? 'This browser cannot record audio.'
         : 'The microphone is only available over HTTPS or on localhost.');
     }
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
+    const preferred = preferredMicrophone();
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: preferred ? { ...PROCESSING, deviceId: { exact: preferred.id } } : PROCESSING,
+      });
+    } catch (err) {
+      if (!preferred || !['OverconstrainedError', 'NotFoundError', 'NotReadableError'].includes(err.name)) throw err;
+      // The chosen microphone is unplugged or busy: use the default one rather than nothing.
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: PROCESSING });
+      this.fellBack = true;
+    }
+    const track = this.stream.getAudioTracks()[0];
+    this.label = (track && track.label) || '';
     try {
       this.ctx = new AudioContext();
       await this.ctx.audioWorklet.addModule('/static/js/pcm-worklet.js');
@@ -57,6 +103,7 @@ export class MicCapture {
 
 /** Records the microphone into memory; stop() returns a 16 kHz WAV Blob. */
 export class MicRecorder {
+  /** @param {{ onLevel?: (rms: number) => void }} [handlers] */
   constructor({ onLevel } = {}) {
     this.chunks = [];
     this.capture = new MicCapture({ onChunk: (c) => this.chunks.push(c), onLevel });
@@ -106,7 +153,7 @@ export async function fileToWav(file) {
   const pcm = new Int16Array(f.length);
   for (let i = 0; i < f.length; i++) {
     const s = Math.max(-1, Math.min(1, f[i]));
-    pcm[i] = s < 0 ? s * 32768 : s * 32767;
+    pcm[i] = Math.round(s < 0 ? s * 32768 : s * 32767);
   }
   return wavFromInt16(pcm, SAMPLE_RATE);
 }

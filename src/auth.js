@@ -1,10 +1,12 @@
 'use strict';
 
 const crypto = require('crypto');
-const { promisify } = require('util');
 const { HttpError } = require('./errors');
 
-const scrypt = promisify(crypto.scrypt);
+/** crypto.scrypt as a promise. */
+const scrypt = (password, salt, keylen, options) => new Promise((resolve, reject) => {
+  crypto.scrypt(password, salt, keylen, options, (err, key) => (err ? reject(err) : resolve(key)));
+});
 
 const COOKIE = 'vr_session';
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
@@ -21,7 +23,7 @@ async function verifyPassword(password, stored) {
   const [kind, N, r, p, salt, hash] = String(stored).split('$');
   if (kind !== 'scrypt') return false;
   const expected = Buffer.from(hash, 'base64');
-  const actual = await scrypt(password, Buffer.from(salt, 'base64'), expected.length, { N: +N, r: +r, p: +p });
+  const actual = await scrypt(password, Buffer.from(salt, 'base64'), expected.length, { N: Number(N), r: Number(r), p: Number(p) });
   return crypto.timingSafeEqual(expected, actual);
 }
 
@@ -118,6 +120,11 @@ class Auth {
     return this.publicUser(this.getUser(Number(lastInsertRowid)));
   }
 
+  /**
+   * @param {number} id
+   * @param {{ password?: string, role?: string }} changes
+   * @param {{ keepToken?: string }} [options] keepToken: the session that stays signed in
+   */
   async updateUser(id, { password, role }, { keepToken } = {}) {
     const user = this.getUser(id);
     if (!user) throw new HttpError(404, 'User not found.');

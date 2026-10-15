@@ -13,7 +13,8 @@ const next = (() => {
   }
 })();
 
-const $ = (id) => document.getElementById(id);
+/** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
+const $ = (id) => /** @type {any} */ (document.getElementById(id));
 $('corner').append(themeButton());
 
 async function init() {
@@ -21,7 +22,7 @@ async function init() {
   if (!setup.needed) $('login-form').classList.remove('hidden');
   else if (setup.allowed) $('setup-form').classList.remove('hidden');
   else $('setup-remote').classList.remove('hidden');
-  const visible = document.querySelector('form:not(.hidden) input');
+  const visible = /** @type {HTMLInputElement | null} */ (document.querySelector('form:not(.hidden) input'));
   if (visible) visible.focus();
 }
 

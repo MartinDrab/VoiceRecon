@@ -2,7 +2,8 @@ import {
   api, h, icon, toast, initPage, formatDuration, formatDateTime, formatClock, transcriptTitle, highlight, speakerColor,
 } from './common.js';
 
-const $ = (id) => document.getElementById(id);
+/** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
+const $ = (id) => /** @type {any} */ (document.getElementById(id));
 const tid = Number(location.pathname.split('/').pop());
 const params = new URLSearchParams(location.search);
 const query = params.get('q') || '';

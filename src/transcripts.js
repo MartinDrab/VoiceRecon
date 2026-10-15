@@ -87,8 +87,10 @@ class TranscriptStore {
   }
 
   /**
-   * @param line { start, end, spokenAt, speaker: { voiceId, key, label }, text, seconds, embedding, model }
-   * @returns the new line id
+   * @param {number} transcriptId
+   * @param {{ start: number, end: number, spokenAt: number, speaker: { voiceId: number | null, key: string, label: string },
+   *   text: string, seconds?: number, embedding?: Float32Array, model?: string }} line
+   * @returns {number} the new line id
    */
   appendLine(transcriptId, line) {
     const { lastInsertRowid } = this.db.prepare(`INSERT INTO transcript_lines
@@ -116,7 +118,10 @@ class TranscriptStore {
 
   /**
    * Moves some lines ({ lineIds }) or all lines of one speaker ({ key }) to another speaker.
-   * @returns the affected rows as they were before the change
+   * @param {number} transcriptId
+   * @param {{ lineIds?: number[], key?: string }} target
+   * @param {{ voiceId?: number, label?: string }} speaker
+   * @returns {any[]} the affected rows as they were before the change
    */
   setSpeaker(transcriptId, { lineIds, key }, speaker) {
     const s = this.resolveSpeaker(speaker);
@@ -228,6 +233,7 @@ class TranscriptStore {
    * case and diacritics, words matched as prefixes), or whose title contains it; each with a few
    * snippets of lines that contain any of the words.
    */
+  /** @param {{ q?: string, limit?: number, offset?: number }} [options] */
   list({ q = '', limit = 30, offset = 0 } = {}) {
     limit = Math.max(1, Math.min(100, Number(limit) || 30));
     offset = Math.max(0, Number(offset) || 0);

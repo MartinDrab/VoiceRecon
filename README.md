@@ -31,7 +31,7 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 1 
 
 ### What you get
 
-- **Transcript page** (`/transcript`): only the conversation. Each speaker's text is in their color with their name above it. Text appears in grey italics while someone is still talking and is replaced by the final text once they pause. The toolbar fades away while listening (move the mouse to bring it back). Keyboard: <kbd>Space</kbd> starts/stops, <kbd>+</kbd>/<kbd>−</kbd> change the text size. Everything said is saved on the server as it is recognized (see *History*). The menu can download the transcript as a text file, start a *New transcript* (the previous one stays in History), open the current transcript in History, or switch to full screen. With *Keep audio for download* turned on, it can also download the recorded audio (see [Measuring accuracy](#measuring-accuracy-on-your-own-recordings)).
+- **Transcript page** (`/transcript`): only the conversation. Each speaker's text is in their color with their name above it. Text appears in grey italics while someone is still talking and is replaced by the final text once they pause. The toolbar fades away while listening (move the mouse to bring it back). Keyboard: <kbd>Space</kbd> starts/stops, <kbd>+</kbd>/<kbd>−</kbd> change the text size. Everything said is saved on the server as it is recognized (see *History*). The menu can download the transcript as a text file, start a *New transcript* (the previous one stays in History), open the current transcript in History, choose the *Microphone*, or switch to full screen. The chosen microphone is remembered by the browser and also used for recordings on the Voices page; it can be switched while listening. If it is unplugged, the default microphone is used and a message says so (the browser shows microphone names only after microphone access has been allowed once). With *Keep audio for download* turned on, it can also download the recorded audio (see [Measuring accuracy](#measuring-accuracy-on-your-own-recordings)).
 - **Unknown speakers**: people without a saved voice are grouped as *Speaker 1*, *Speaker 2*, … (grey, dashed marker). Click such a name to say which existing voice it is, or to save that person as a new voice using the audio heard so far; the earlier lines are relabeled immediately.
 - **Corrections**: if a line is credited to the wrong person, click the name and pick who really said it. That voice remembers how the line sounded and is recognized better from then on. Lines can be corrected while the session is still connected (not after a page reload).
 - **Speaker changes without a pause**: when someone answers without a gap, the utterance is split where the voice changes, and the text is cut between words.
@@ -218,10 +218,12 @@ counts as an error. Write numbers in the reference the way you prefer to see the
 ## Development
 
 ```bash
-npm test
+npm run check
 ```
 
-This runs the unit tests and an end-to-end test. The end-to-end test starts the server, enrolls two
+This runs ESLint (`npm run lint`), type checking of the JavaScript with TypeScript in `checkJs`
+mode (`npm run typecheck`; nothing is compiled) and all tests (`npm test`). The tests include unit
+tests and an end-to-end test. The end-to-end test starts the server, enrolls two
 voices, streams a recorded Czech conversation over the WebSocket and checks who said what. It needs
 synthetic test audio, made with two Czech text-to-speech voices:
 
@@ -233,12 +235,18 @@ npm run models -- --test
 node scripts/make-test-audio.js
 ```
 
+GitHub Actions runs the same checks on every push and pull request (`.github/workflows/ci.yml`:
+Ubuntu with Node 22 and 24, Windows with Node 24). The speech tests need the models, so there they
+skip themselves; a nightly workflow (`speech-tests.yml`, also startable by hand) downloads the
+models, runs every test with `VOICERECON_REQUIRE_MODELS=1` (missing models then fail instead of
+skipping) and attaches an accuracy report to the run.
+
 Project layout:
 
 ```
 src/          server: config, database, auth, audio I/O, speech engine, voice manager, transcriber,
               WebSocket, evaluation scoring
-public/       pages (login, transcript, voices, users) and their scripts/styles
+public/       pages (login, transcript, history, voices, users) and their scripts/styles
 scripts/      model download, test-audio generator, create-user CLI, accuracy evaluation
 test/         unit and end-to-end tests; test/fixtures (generated) is also an evaluation dataset
 ```

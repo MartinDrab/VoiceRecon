@@ -1,7 +1,10 @@
 import { api, h, icon, toast, logout, nextColor, themeLabel, nextTheme } from './common.js';
-import { MicCapture, wavFromInt16, SAMPLE_RATE } from './audio.js';
+import {
+  MicCapture, wavFromInt16, SAMPLE_RATE, listMicrophones, preferredMicrophone, setPreferredMicrophone,
+} from './audio.js';
 
-const $ = (id) => document.getElementById(id);
+/** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
+const $ = (id) => /** @type {any} */ (document.getElementById(id));
 const STORE_KEY = 'voicerecon.transcript';
 const TRANSCRIPT_ID_KEY = 'voicerecon.transcriptId'; // the saved transcript this tab continues
 const SIZE_KEY = 'voicerecon.textSize';
@@ -50,7 +53,7 @@ function speakerKey(sp, ep = epoch) {
   return 'none';
 }
 
-function speakerInfo(sp, ep) {
+function speakerInfo(sp) {
   if (sp.kind === 'voice') {
     const v = voices.get(sp.id);
     return v ? { name: v.name, color: v.color } : { name: 'Deleted voice', color: NONE_COLOR };
@@ -67,8 +70,8 @@ const clock = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digi
 /** Lines of the current server session can be corrected: their voice prints are still there. */
 const correctable = (turn) => Boolean(turn && turn.epoch === epoch && turn.ids.length && ws && ws.readyState === WebSocket.OPEN);
 
-function renderHeader(turnEl, sp, ep, wall, turn = null) {
-  const info = speakerInfo(sp, ep);
+function renderHeader(turnEl, sp, wall, turn = null) {
+  const info = speakerInfo(sp);
   turnEl.style.setProperty('--c', info.color);
   turnEl.classList.toggle('unknown', Boolean(info.unknown));
   const parts = [h('span.name', {}, info.name), wall ? h('span.time', {}, clock(wall)) : null];
@@ -95,7 +98,7 @@ function afterAppend(stick) {
 
 function buildTurn(t) {
   t.el = h('div.turn', {}, h('p.text', {}, t.texts.join(' ')));
-  renderHeader(t.el, t.speaker, t.epoch, t.wall, t);
+  renderHeader(t.el, t.speaker, t.wall, t);
   $('transcript').insertBefore(t.el, pendingEl);
 }
 
@@ -125,20 +128,20 @@ function setPartial(msg) {
   }
   pendingEl.classList.toggle('hidden', !msg.text);
   if (msg.text) {
-    renderHeader(pendingEl, msg.speaker, epoch, null);
+    renderHeader(pendingEl, msg.speaker, null);
     pendingEl.querySelector('.text').textContent = msg.text;
   }
   afterAppend(stick);
 }
 
 function rerenderAll() {
-  for (const t of turns) renderHeader(t.el, t.speaker, t.epoch, t.wall, t);
+  for (const t of turns) renderHeader(t.el, t.speaker, t.wall, t);
 }
 
 function setSpeaker(t, sp) {
   t.speaker = sp;
   t.key = speakerKey(sp, t.epoch);
-  renderHeader(t.el, t.speaker, t.epoch, t.wall, t);
+  renderHeader(t.el, t.speaker, t.wall, t);
 }
 
 function relabel(from, to) {
@@ -210,7 +213,7 @@ function saveFile(blob, prefix, ext) {
 }
 
 function download() {
-  const lines = turns.map((t) => `[${clock(t.wall)}] ${speakerInfo(t.speaker, t.epoch).name}: ${t.texts.join(' ')}`);
+  const lines = turns.map((t) => `[${clock(t.wall)}] ${speakerInfo(t.speaker).name}: ${t.texts.join(' ')}`);
   saveFile(new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' }), 'transcript', 'txt');
 }
 
@@ -343,9 +346,8 @@ function connect() {
 
 // ---------- microphone ----------
 
-async function start() {
-  if (listening) return;
-  mic = new MicCapture({
+function createMic() {
+  return new MicCapture({
     onChunk: (pcm) => {
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(pcm.buffer);
       if (keepAudio) keepChunk(pcm);
@@ -354,19 +356,103 @@ async function start() {
       $('level').style.width = `${Math.min(100, Math.sqrt(rms) * 220)}%`;
     },
   });
+}
+
+const micError = (err) => (err.name === 'NotAllowedError' ? 'Microphone access was denied.' : err.message);
+
+/** After a microphone started: say so if the chosen one was missing, and show which one is used. */
+function micStarted(m) {
+  if (m.fellBack) {
+    const chosen = preferredMicrophone();
+    toast(`${chosen && chosen.label ? `“${chosen.label}”` : 'The chosen microphone'} is not available, so the default one is used.`, { error: true });
+  }
+  renderMicChoice();
+}
+
+async function start() {
+  if (listening) return;
+  mic = createMic();
   try {
     ws.send(startMessage());
     await mic.start();
   } catch (err) {
     mic = null;
-    toast(err.name === 'NotAllowedError' ? 'Microphone access was denied.' : err.message, { error: true });
+    toast(micError(err), { error: true });
     return;
   }
   listening = true;
+  micStarted(mic);
   refreshStatus();
   idleWatch();
   keepScreenOn();
 }
+
+// ---------- choosing the microphone ----------
+
+function micName() {
+  if (mic && mic.label) return mic.label;
+  const chosen = preferredMicrophone();
+  return chosen ? chosen.label || 'Chosen microphone' : 'System default';
+}
+
+function renderMicChoice() {
+  const chosen = preferredMicrophone();
+  $('mic-choice').textContent = `Microphone: ${chosen ? chosen.label || 'Chosen microphone' : 'System default'}`;
+  $('level').parentElement.title = `Microphone level: ${micName()}`;
+}
+
+async function renderMicDialog() {
+  let devices = [];
+  try {
+    devices = await listMicrophones();
+  } catch { /* listing not allowed: only the default is offered */ }
+  const chosen = preferredMicrophone();
+  const choice = (device, name) => {
+    const current = chosen ? Boolean(device) && device.deviceId === chosen.id : !device;
+    return h('button.voice-choice', { type: 'button', 'aria-current': current ? 'true' : 'false', onclick: () => chooseMic(device) },
+      h('span', {}, name), current ? h('span.current', {}, 'chosen') : null);
+  };
+  $('mic-choices').replaceChildren(
+    choice(null, 'System default'),
+    ...devices.map((d, i) => choice(d, d.label || `Microphone ${i + 1}`)));
+  const unnamed = devices.length && devices.every((d) => !d.label);
+  $('mic-hint').textContent = unnamed
+    ? 'The browser shows microphone names after you allow microphone access: press Start once, then come back here.'
+    : `The chosen microphone is also used for recordings on the Voices page.${listening ? ' Switching takes effect immediately.' : ''}`;
+}
+
+async function chooseMic(device) {
+  setPreferredMicrophone(device);
+  $('mic-dialog').close();
+  renderMicChoice();
+  if (!listening || !mic) return;
+  // Swap the microphone while the transcription keeps running.
+  const old = mic;
+  mic = null;
+  await old.stop();
+  const next = createMic();
+  try {
+    await next.start();
+    mic = next;
+    micStarted(next);
+    toast(`Now listening with ${micName()}.`);
+  } catch (err) {
+    toast(micError(err), { error: true });
+    await stop();
+  }
+}
+
+$('mic-choice').addEventListener('click', async () => {
+  await renderMicDialog();
+  $('mic-dialog').showModal();
+});
+$('mic-close').addEventListener('click', () => $('mic-dialog').close());
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => {
+    if ($('mic-dialog').open) renderMicDialog();
+  });
+}
+renderMicChoice();
 
 // Keeps the screen from sleeping while listening (the lock is dropped when the tab is hidden).
 async function keepScreenOn() {
@@ -539,8 +625,9 @@ $('jump').addEventListener('click', () => {
 
 document.addEventListener('mousemove', idleWatch);
 document.addEventListener('keydown', (e) => {
-  if (e.target.closest('input, textarea, select, dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
-  if (e.code === 'Space' && !e.target.closest('button')) {
+  const target = /** @type {HTMLElement} */ (e.target);
+  if (target.closest('input, textarea, select, dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.code === 'Space' && !target.closest('button')) {
     e.preventDefault();
     if (!$('rec').disabled) $('rec').click();
   } else if (e.key === '+' || e.key === '=') {

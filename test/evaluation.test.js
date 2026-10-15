@@ -88,7 +88,9 @@ test('resample keeps speech frequencies and removes aliasing', () => {
 });
 
 const FIXTURES = path.join(__dirname, 'fixtures');
-const haveModels = fs.existsSync(config.asr.encoder) && fs.existsSync(path.join(FIXTURES, 'reference.txt'));
+// Skipped without models and test audio, unless VOICERECON_REQUIRE_MODELS=1 (nightly CI): then it fails.
+const haveModels = process.env.VOICERECON_REQUIRE_MODELS === '1'
+  || (fs.existsSync(config.asr.encoder) && fs.existsSync(path.join(FIXTURES, 'reference.txt')));
 
 test('evaluate script on the synthetic conversation', { skip: !haveModels && 'models or fixtures missing', timeout: 180000 }, () => {
   const json = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-eval-test-')), 'out.json');

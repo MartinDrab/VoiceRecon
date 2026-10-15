@@ -1,5 +1,11 @@
 // Shared helpers for all pages: API calls, DOM building, top navigation, toasts.
 
+/**
+ * Calls the server's API; JSON in and out, or a WAV recording as `raw`.
+ * @param {string} path
+ * @param {{ method?: string, body?: any, raw?: Blob }} [options]
+ * @returns {Promise<any>}
+ */
 export async function api(path, { method = 'GET', body, raw } = {}) {
   const opts = { method, headers: {} };
   if (raw) {
@@ -95,6 +101,8 @@ export function themeButton() {
   return btn;
 }
 
+let toastTimer = null;
+
 export function toast(message, { error = false } = {}) {
   let el = document.getElementById('toast');
   if (!el) {
@@ -104,8 +112,8 @@ export function toast(message, { error = false } = {}) {
   el.textContent = message;
   el.classList.toggle('error', error);
   el.classList.add('show');
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), error ? 6000 : 2500);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), error ? 6000 : 2500);
 }
 
 export async function logout() {

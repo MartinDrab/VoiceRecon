@@ -1,7 +1,8 @@
 import { api, h, icon, toast, initPage, formatDuration, nextColor } from './common.js';
 import { MicRecorder, fileToWav } from './audio.js';
 
-const $ = (id) => document.getElementById(id);
+/** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
+const $ = (id) => /** @type {any} */ (document.getElementById(id));
 let user = null;
 let state = { voices: [], threshold: 0.4, learnFromSpeech: false, ready: false };
 let recorder = null; // { rec, target: voiceId | 'test', timer }
@@ -174,6 +175,7 @@ async function startRecording(target) {
     toast(err.name === 'NotAllowedError' ? 'Microphone access was denied.' : err.message, { error: true });
     return;
   }
+  if (rec.capture.fellBack) toast('The microphone chosen on the Transcript page is not available, so the default one is used.', { error: true });
   const started = Date.now();
   recorder = {
     rec,

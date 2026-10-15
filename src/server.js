@@ -205,7 +205,7 @@ api.put('/settings/learn', admin, json, (req, res) => {
 // saved transcripts (everyone can read and edit; deleting is for the author and administrators)
 api.get('/transcripts', user, (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q : '';
-  res.json(transcripts.list({ q, limit: req.query.limit, offset: req.query.offset }));
+  res.json(transcripts.list({ q, limit: Number(req.query.limit), offset: Number(req.query.offset) }));
 });
 api.get('/transcripts/:id', user, (req, res) => {
   const tid = id(req.params.id);
@@ -255,7 +255,6 @@ app.use('/api', api);
 
 app.use((req, res) => res.status(404).type('text').send('Not found'));
 
-// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
   const status = err.status || err.statusCode || 500;
   if (status >= 500) console.error(err);

@@ -45,7 +45,7 @@ class Pcm16kProcessor extends AudioWorkletProcessor {
 
   emit(v) {
     const s = Math.max(-1, Math.min(1, v));
-    this.out[this.outLen++] = s < 0 ? s * 32768 : s * 32767;
+    this.out[this.outLen++] = Math.round(s < 0 ? s * 32768 : s * 32767);
     this.sumSq += s * s;
     if (this.outLen === CHUNK) {
       const level = Math.sqrt(this.sumSq / CHUNK);

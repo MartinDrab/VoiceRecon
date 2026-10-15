@@ -31,6 +31,7 @@
           <button id="download-audio" role="menuitem" class="hidden">Download recording</button>
           <button id="keep-audio" role="menuitemcheckbox" aria-checked="false" title="Keeps the microphone audio in this tab so it can be downloaded, e.g. to measure accuracy">Keep audio for download</button>
           <button id="clear" role="menuitem" title="The current transcript stays saved in History">New transcript</button>
+          <button id="mic-choice" role="menuitem">Microphone: System default</button>
           <button id="fullscreen" role="menuitem">Full screen</button>
           <button id="theme" role="menuitem" title="Cycles System, Light and Dark">Theme: System</button>
           <hr>
@@ -54,6 +55,15 @@
     </div>
     <button class="btn jump hidden" id="jump">↓ Jump to latest</button>
   </div>
+
+  <dialog id="mic-dialog">
+    <div class="dialog-body">
+      <h2>Microphone</h2>
+      <p class="muted small" id="mic-hint"></p>
+      <div class="voice-choices" id="mic-choices"></div>
+      <div class="buttons"><button class="btn" type="button" id="mic-close">Close</button></div>
+    </div>
+  </dialog>
 
   <dialog id="who-dialog">
     <div class="dialog-body">

@@ -105,7 +105,7 @@ function openDatabase(dataDir) {
   const db = new DatabaseSync(path.join(dataDir, 'voicerecon.db'));
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 
-  const version = db.prepare('PRAGMA user_version').get().user_version;
+  const version = Number(db.prepare('PRAGMA user_version').get().user_version);
   for (let v = version; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
     try {

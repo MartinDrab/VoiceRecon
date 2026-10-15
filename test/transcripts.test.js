@@ -78,7 +78,7 @@ test('search ignores case and diacritics and returns marked snippets', () => {
   const r = store.list({ q: 'italii MORE' });
   assert.strictEqual(r.total, 1);
   assert.strictEqual(r.transcripts[0].id, a.id);
-  assert.match(r.transcripts[0].snippets[0].text, /\u0002Itálii\u0003 u \u0002moře\u0003/);
+  assert.ok(r.transcripts[0].snippets[0].text.includes('\u0002Itálii\u0003 u \u0002moře\u0003'), 'matches are marked');
   assert.strictEqual(store.list({ q: 'dovol' }).total, 1, 'words match as prefixes');
   const spread = store.list({ q: 'dovolene skvele' });
   assert.strictEqual(spread.total, 1, 'the words may be in different lines');

@@ -1,0 +1,20 @@
+{
+  // Type checking of the pages' scripts (ES modules in the browser, nothing is compiled).
+  // pcm-worklet.js runs in an AudioWorklet, for which TypeScript has no type library; it is
+  // covered by test/worklet.test.js instead.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "strict": false,
+    "noImplicitThis": true,
+    "skipLibCheck": true
+  },
+  "include": ["static/js/**/*.js", "static/js/**/*.d.ts"],
+  "exclude": ["static/js/pcm-worklet.js"]
+}

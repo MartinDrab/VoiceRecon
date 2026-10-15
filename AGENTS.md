@@ -25,6 +25,9 @@ npm run models                       # speech models -> models/ (~520 MB, gitign
 npm run models -- --test             # also the two Czech TTS voices used for test audio
 node scripts/make-test-audio.js      # synthetic conversation -> test/fixtures/ (gitignored)
 npm test                             # unit + end-to-end tests (node:test)
+npm run lint                         # ESLint (eslint.config.js)
+npm run typecheck                    # TypeScript checkJs: tsconfig.json (server) + public/tsconfig.json (pages)
+npm run check                        # lint + typecheck + test, as CI runs it
 npm run evaluate -- test/fixtures    # accuracy report: WER and speaker accuracy (see README)
 npm run evaluate -- <dir> --learn 0,1 --change-similarity 0.3,0.5,0.6   # compare settings
 npm start                            # http://127.0.0.1:3000
@@ -112,6 +115,8 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 - One JSDoc block per class or public function, explaining *why* rather than restating the code. Constants carry their unit (`sec(0.4)` = samples) and a short reason.
 - Build front-end DOM with `h()` from `common.js` and set user data via text or attributes. Never use `innerHTML` with data (only `icon()` uses it, for fixed SVG).
 - Use `api()` from `common.js` for requests; it redirects to the login page on 401.
+- Type checking runs on plain JavaScript (`checkJs`, not strict). Add JSDoc types where the checker needs them (optional fields of option objects, `@type {any}` casts for DOM lookups); declarations the code cannot make itself live in `src/types.d.ts` (e.g. `req.user`) and `public/static/js/globals.d.ts` (e.g. `window.voiceReconTheme`). `pcm-worklet.js` is not type-checked (no TypeScript library for worklets) and is covered by `test/worklet.test.js` instead.
+- The microphone is chosen in one place: `preferredMicrophone()` in `public/static/js/audio.js`, used by every `MicCapture`; a missing device falls back to the default (`fellBack`).
 - User-facing messages are full sentences ending with a period.
 - Colors only through the CSS custom properties at the top of `app.css`. The light values are on `:root`; the dark values exist twice, once for the system setting (`@media (prefers-color-scheme: dark) :root:not([data-theme="light"])`) and once for the manual choice (`:root[data-theme="dark"]`). Keep both dark blocks identical and give every new color token a light and a dark value; `test/ui.test.js` checks this. Text in a voice's color goes through `oklch(from var(--c) clamp(var(--voice-l-min), l, var(--voice-l-max)) c h)` so any chosen color stays readable.
 - Every page loads `/static/js/theme.js` as a plain (blocking) script before `app.css`; it applies the saved theme before the first paint. Check new UI in both themes (`resize_window` with `colorScheme`, or the theme button).
@@ -151,6 +156,6 @@ constants on them alone; tune them with `npm run evaluate` on real recordings.
 
 ## Before you finish a change
 
-- Run `npm test` and confirm the end-to-end test actually ran.
+- Run `npm run check` (lint, type checks, tests) and confirm the end-to-end test actually ran. With `VOICERECON_REQUIRE_MODELS=1` the speech tests fail instead of skipping when models are missing (the nightly CI uses this).
 - For transcriber or speech changes, run `npm run evaluate -- test/fixtures` before and after (and on any real dataset available) and compare WER and speaker accuracy. On the fixtures, speaker accuracy must stay 100%; WER was 14.9% when the tool was introduced.
 - Update README.md when behavior, configuration or commands change.
