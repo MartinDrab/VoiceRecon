@@ -23,7 +23,7 @@ const { openDatabase, getSetting } = require('../src/db');
 const { decodeWav } = require('../src/audio');
 const { SpeechEngine, SAMPLE_RATE } = require('../src/speech/engine');
 const { VoiceManager } = require('../src/voices');
-const { TranscriptionSession } = require('../src/transcriber');
+const { TranscriptionSession, CHANGE_MAX_SIMILARITY } = require('../src/transcriber');
 const { parseReference, score, formatDetails } = require('../src/evaluation');
 
 const USAGE = `Usage: npm run evaluate -- <dataset folder> [options]
@@ -252,7 +252,7 @@ async function main() {
     const defaults = {
       threshold: app ? app.threshold : config.speakerThreshold,
       minSilence: 0.35,
-      changeSimilarity: 0.3,
+      changeSimilarity: CHANGE_MAX_SIMILARITY,
       learn: app && app.learnFromSpeech ? 1 : 0,
     };
     const combos = product(opts.lists).map((c) => ({ ...defaults, ...c }));

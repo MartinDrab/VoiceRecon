@@ -130,7 +130,7 @@ TLS_KEY=data/key.pem
 | `MODELS_DIR` | `./models` | Speech models |
 | `THREADS` | CPU cores, max 4 | Threads for speech recognition |
 | `SPEAKER_MODEL` | `3dspeaker_campplus_zh_en_advanced.onnx` | Speaker-embedding model file in `MODELS_DIR` |
-| `SPEAKER_THRESHOLD` | `0.4` | Initial match threshold (later changed on the Voices page) |
+| `SPEAKER_THRESHOLD` | `0.5` | Initial match threshold (later changed on the Voices page) |
 | `SESSION_TTL_HOURS` | `168` | How long a login lasts |
 | `VOICERECON_DEBUG` | — | `1` logs every utterance and saves its audio to `%TEMP%/voicerecon-debug` |
 
@@ -221,7 +221,7 @@ To compare settings, give several values. Every combination is a separate run; r
 results are reused when only speaker settings change, so threshold sweeps are fast:
 
 ```bash
-npm run evaluate -- my-meeting --app-voices --threshold 0.3,0.35,0.4,0.5 --min-silence 0.25,0.35
+npm run evaluate -- my-meeting --app-voices --threshold 0.4,0.5,0.6 --min-silence 0.25,0.35
 ```
 
 | Option | Meaning |

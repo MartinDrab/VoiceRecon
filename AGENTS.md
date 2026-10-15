@@ -160,8 +160,11 @@ navigator.mediaDevices.getUserMedia = async () => {
 The transcript keeps its lines in `sessionStorage`; clear it between runs.
 
 The synthetic TTS voices are easier than real speakers: same-voice scores are 0.8–0.95 and
-different voices score about 0. Don't tune `SPEAKER_THRESHOLD` (default 0.4) or the change-detection
-constants on them alone; tune them with `npm run evaluate` on real recordings.
+different voices score about 0. Don't tune `SPEAKER_THRESHOLD` or the change-detection constants on
+them alone; tune them with `npm run evaluate` on real recordings. The current defaults (threshold 0.5,
+`CHANGE_MAX_SIMILARITY` 0.5) were chosen on three real 60 s recordings: own-voice scores 0.51–0.95,
+other people up to 0.50; at 0.4 a person who was not enrolled got lines of an enrolled voice, and at a
+split setting of 0.3 most speaker changes without a pause stayed in one line.
 
 ## Before you finish a change
 

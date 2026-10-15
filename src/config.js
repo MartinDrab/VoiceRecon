@@ -51,7 +51,9 @@ module.exports = {
   /** Every file the speech engine loads (scripts/download-models.js fetches them). */
   modelFiles: [asr.encoder, asr.decoder, asr.joiner, asr.tokens, vadModel, speakerModel],
 
-  // Default cosine-similarity threshold for accepting a voice match.
-  // Can be changed at runtime from the Voices page (stored in the database).
-  speakerThreshold: num('SPEAKER_THRESHOLD', 0.4),
+  // Default cosine-similarity threshold for accepting a voice match (also for joining an unknown
+  // speaker). Can be changed at runtime from the Voices page (stored in the database). 0.5 rather
+  // than 0.4: on real recordings different people scored up to 0.5 against each other, and at 0.4
+  // a person who was not enrolled got some lines of an enrolled voice.
+  speakerThreshold: num('SPEAKER_THRESHOLD', 0.5),
 };

@@ -7,7 +7,7 @@ import { chooseFileLength } from './file-length.js';
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
 let user = null;
-let state = { voices: [], threshold: 0.4, learnFromSpeech: false, ready: false };
+let state = { voices: [], threshold: 0.5, learnFromSpeech: false, ready: false };
 let recorder = null; // { rec, target: voiceId | 'test', timer }
 let player = null; // { audio, sampleId }
 let uploadTarget = null;
