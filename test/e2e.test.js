@@ -48,7 +48,7 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
   const port = await freePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-e2e-'));
   const server = spawn(process.execPath, [path.join(config.root, 'src', 'server.js')], {
-    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir },
+    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, TLS_CERT: '', TLS_KEY: '' }, // over any .env
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';

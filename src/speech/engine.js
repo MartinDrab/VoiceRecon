@@ -62,14 +62,9 @@ class SpeechEngine {
     this.running = null; // the job being decoded
   }
 
-  modelFiles() {
-    const { asr, vadModel, speakerModel } = this.config;
-    return [asr.encoder, asr.decoder, asr.joiner, asr.tokens, vadModel, speakerModel];
-  }
-
   async load() {
     try {
-      const missing = this.modelFiles().filter((f) => !fs.existsSync(f));
+      const missing = this.config.modelFiles.filter((f) => !fs.existsSync(f));
       if (missing.length) {
         throw new HttpError(500, 'Missing model files (run "npm run models"):\n{files}', { files: missing.map((f) => `  ${f}`).join('\n') });
       }

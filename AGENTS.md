@@ -31,6 +31,7 @@ npm run check                        # lint + typecheck + test, as CI runs it
 npm run evaluate -- test/fixtures    # accuracy report: WER and speaker accuracy (see README)
 npm run evaluate -- <dir> --learn 0,1 --change-similarity 0.3,0.5,0.6   # compare settings
 npm start                            # http://127.0.0.1:3000
+start.cmd / ./start.sh [--no-browser]   # for users: installs what is missing, starts, opens the browser (scripts/launch.js)
 npm run create-user -- <name> [--admin | --user]   # add a user / reset a password
 ```
 
@@ -39,6 +40,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 - `npm run evaluate -- <folder>` runs the real `TranscriptionSession` offline on a recording and scores it against a hand-written `reference.txt` (no timestamps needed; words are aligned). `--threshold`, `--min-silence` and `--change-similarity` take comma-separated lists for parameter sweeps. `test/fixtures` is a ready-made (synthetic) dataset; real ones are made with the transcript page's *Keep audio for download* + *Download recording*.
 - `VOICERECON_DEBUG=1` logs every utterance's recognized text and saves its exact ASR input as WAV files in `%TEMP%/voicerecon-debug`. Use it to diagnose recognition problems before changing parameters.
 - Never point a dev or test server at the user's real `data/` folder. Set `DATA_DIR` to a short temporary path.
+- `src/config.js` also reads a `.env` file in the project folder (environment variables win). A developer's `.env` therefore reaches tests and scripts too; tests that start a server set what they depend on explicitly (see the `env` in `test/e2e.test.js`). The model file list lives in `config.modelFiles`, shared by the speech engine and the launcher.
 
 ## Layout
 
@@ -58,6 +60,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 | `public/*.html`, `public/static/js/*.js` | Pages: login, transcript, history (list), history-view (one transcript), voices, users (ES modules) |
 | `public/static/js/pcm-worklet.js` | AudioWorklet: microphone -> 16 kHz mono Int16, windowed-sinc resampler |
 | `scripts/evaluate.js` | Accuracy evaluation CLI (temporary database, ASR results cached across parameter runs) |
+| `scripts/launch.js` | One-step start behind `start.cmd` / `start.sh`: checks Node, installs missing dependencies and models, starts the server, opens the browser; only opens the browser when VoiceRecon already runs |
 | `scripts/` | Also: model downloader, test-audio generator, create-user CLI |
 
 ## Data flow

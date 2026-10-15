@@ -5,6 +5,14 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 
+// Settings may also be kept in a .env file in the project folder (VARIABLE=value lines).
+// Variables that are already set in the environment win.
+try {
+  process.loadEnvFile(path.join(root, '.env'));
+} catch (err) {
+  if (err.code !== 'ENOENT') throw err;
+}
+
 function num(name, fallback) {
   const v = process.env[name];
   if (v === undefined || v === '') return fallback;
@@ -15,6 +23,14 @@ function num(name, fallback) {
 
 const modelsDir = path.resolve(process.env.MODELS_DIR || path.join(root, 'models'));
 const asrDir = path.join(modelsDir, 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8');
+const asr = {
+  encoder: path.join(asrDir, 'encoder.int8.onnx'),
+  decoder: path.join(asrDir, 'decoder.int8.onnx'),
+  joiner: path.join(asrDir, 'joiner.int8.onnx'),
+  tokens: path.join(asrDir, 'tokens.txt'),
+};
+const vadModel = path.join(modelsDir, 'silero_vad.onnx');
+const speakerModel = path.join(modelsDir, process.env.SPEAKER_MODEL || '3dspeaker_campplus_zh_en_advanced.onnx');
 
 module.exports = {
   root,
@@ -29,14 +45,11 @@ module.exports = {
   sampleRate: 16000,
   threads: num('THREADS', Math.max(1, Math.min(4, os.cpus().length))),
 
-  asr: {
-    encoder: path.join(asrDir, 'encoder.int8.onnx'),
-    decoder: path.join(asrDir, 'decoder.int8.onnx'),
-    joiner: path.join(asrDir, 'joiner.int8.onnx'),
-    tokens: path.join(asrDir, 'tokens.txt'),
-  },
-  vadModel: path.join(modelsDir, 'silero_vad.onnx'),
-  speakerModel: path.join(modelsDir, process.env.SPEAKER_MODEL || '3dspeaker_campplus_zh_en_advanced.onnx'),
+  asr,
+  vadModel,
+  speakerModel,
+  /** Every file the speech engine loads (scripts/download-models.js fetches them). */
+  modelFiles: [asr.encoder, asr.decoder, asr.joiner, asr.tokens, vadModel, speakerModel],
 
   // Default cosine-similarity threshold for accepting a voice match.
   // Can be changed at runtime from the Voices page (stored in the database).

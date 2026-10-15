@@ -59,6 +59,15 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 1 
 
 ## Setup
 
+The quickest way: install [Node.js](https://nodejs.org/) 22.13 or newer, then start VoiceRecon with
+**`start.cmd`** on Windows (double-click it) or **`./start.sh`** on Linux and macOS. The first time,
+this installs the dependencies and downloads the speech models (about 520 MB); then it starts the
+server and opens VoiceRecon in the browser. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> (on Windows
+answer *Y* to "Terminate batch job") or by closing the window. Started again while it is running, it
+just opens the browser. `--no-browser` starts it without opening one.
+
+The same steps by hand:
+
 ```bash
 npm install
 ```
@@ -97,11 +106,20 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 825 -keyout data/key.pem -out da
 ```
 
 Then start the server with `HOST=0.0.0.0`, `TLS_CERT=data/cert.pem` and `TLS_KEY=data/key.pem`
-(and accept the certificate warning in the browser once).
+(for example in a `.env` file, see below) and accept the certificate warning in the browser once.
 
 ### Configuration
 
-All settings are optional environment variables:
+All settings are optional environment variables. They can also be kept in a `.env` file in the
+project folder, one `VARIABLE=value` per line (variables set in the environment win):
+
+```ini
+PORT=3001
+HOST=0.0.0.0
+TLS_CERT=data/cert.pem
+TLS_KEY=data/key.pem
+```
+
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -251,7 +269,8 @@ Project layout:
 src/          server: config, database, auth, audio I/O, speech engine, voice manager, transcriber,
               WebSocket, evaluation scoring
 public/       pages (login, transcript, history, voices, users) and their scripts/styles
-scripts/      model download, test-audio generator, create-user CLI, accuracy evaluation
+scripts/      launcher (behind start.cmd / start.sh), model download, test-audio generator,
+              create-user CLI, accuracy evaluation
 test/         unit and end-to-end tests; test/fixtures (generated) is also an evaluation dataset
 ```
 
