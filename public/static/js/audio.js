@@ -158,11 +158,6 @@ export async function decodeFile(file) {
   return pcm;
 }
 
-/** Decodes any audio file the browser understands into a 16 kHz mono WAV Blob. */
-export async function fileToWav(file) {
-  return wavFromInt16(await decodeFile(file), SAMPLE_RATE);
-}
-
 export function wavFromInt16(pcm, rate) {
   const header = new DataView(new ArrayBuffer(44));
   const writeStr = (o, s) => [...s].forEach((ch, i) => header.setUint8(o + i, ch.charCodeAt(0)));

@@ -451,13 +451,15 @@ class TranscriptionSession extends EventEmitter {
   }
 
   /** Saves an unknown speaker of this session as a new voice, using the audio heard so far. */
-  saveUnknown(unknownId, { name, color }) {
+  async saveUnknown(unknownId, { name, color }) {
     const u = this.unknown.find((x) => x.id === unknownId);
-    if (!u) throw new Error('That speaker is no longer available in this session.');
+    if (!u || u.saving) throw new Error('That speaker is no longer available in this session.');
     const voiceId = this.voices.create({ name, color });
+    u.saving = true; // the voice print takes a moment; a second click must not save it twice
     try {
-      this.voices.addSample(voiceId, { samples: concat(u.audio), sampleRate: SAMPLE_RATE, label: 'From live transcript' });
+      await this.voices.addSample(voiceId, { samples: concat(u.audio), sampleRate: SAMPLE_RATE, label: 'From live transcript' });
     } catch (err) {
+      u.saving = false;
       this.voices.remove(voiceId);
       throw err;
     }

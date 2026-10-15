@@ -40,6 +40,8 @@ module.exports = {
   'Not enough speech in the recording (found {found} s, need at least {need} s).':
     'V nahrávce je příliš málo řeči (nalezeno {found} s, potřeba je alespoň {need} s).',
   'Could not compute a voice print from this recording.': 'Z této nahrávky se nepodařilo vytvořit hlasový otisk.',
+  'Computing the voice print failed.': 'Výpočet hlasového otisku selhal.',
+  'The voice-print worker stopped.': 'Vlákno pro hlasové otisky se zastavilo.',
   'Send the recording as a WAV file (Content-Type: audio/wav).': 'Pošlete nahrávku jako soubor WAV (Content-Type: audio/wav).',
   'Not a WAV file.': 'Nejde o soubor WAV.',
   'WAV file is missing its fmt or data chunk.': 'Souboru WAV chybí část fmt nebo data.',

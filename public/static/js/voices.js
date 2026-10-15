@@ -1,7 +1,7 @@
 import {
   api, h, icon, toast, initPage, formatDuration, nextColor, t, plural, locale, formatNumber,
 } from './common.js';
-import { MicRecorder, fileToWav, wavFromInt16, SAMPLE_RATE } from './audio.js';
+import { MicRecorder, wavFromInt16, SAMPLE_RATE } from './audio.js';
 import { chooseFileLength } from './file-length.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
@@ -174,7 +174,14 @@ $('file-input').addEventListener('change', async (e) => {
   const files = [...e.target.files];
   if (!files.length) return;
   if (uploadTarget === 'test') {
-    testClip(() => fileToWav(files[0]));
+    const chosen = await chooseFileLength(files.slice(0, 1), {
+      title: t('Test recognition'),
+      action: t('Test'),
+      maxSeconds: MAX_RECORDING_SECONDS,
+      storeKey: 'voicerecon.testLength',
+      defaultLength: 30,
+    });
+    if (chosen && chosen.length) testClip(async () => wavFromInt16(chosen[0].pcm, SAMPLE_RATE));
     return;
   }
   const voiceId = uploadTarget;

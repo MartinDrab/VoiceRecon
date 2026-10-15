@@ -3,8 +3,9 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { Worker } = require('worker_threads');
 const sherpa = require('sherpa-onnx-node');
-const { concat, resample } = require('../audio');
+const { concat, resample, decodeWav, encodeWav } = require('../audio');
 const { HttpError } = require('../errors');
 
 const SAMPLE_RATE = 16000;
@@ -104,6 +105,9 @@ class SpeechEngine {
     this.running = null; // the job being decoded
     this.vocabulary = { pieces: new Set(), file: '' };
     this.hotwords = ''; // in the recognizer's syntax: "phrase :score/phrase :score"
+    this.worker = null; // computes voice prints of recordings (voice-worker.js)
+    this.pending = new Map(); // worker job id -> { resolve, reject }
+    this.jobSeq = 0;
   }
 
   async load() {
@@ -112,9 +116,8 @@ class SpeechEngine {
       if (missing.length) {
         throw new HttpError(500, 'Missing model files (run "npm run models"):\n{files}', { files: missing.map((f) => `  ${f}`).join('\n') });
       }
-      const { asr, threads, speakerModel } = this.config;
-      this.extractor = new sherpa.SpeakerEmbeddingExtractor({ model: speakerModel, numThreads: Math.min(2, threads), debug: 0 });
-      this.speakerModelName = path.basename(speakerModel);
+      const { asr, threads } = this.config;
+      this.loadSpeakerModel();
       this.vocabulary = loadVocabulary(asr.tokens);
       this.recognizer = await sherpa.OfflineRecognizer.createAsync({
         featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
@@ -129,11 +132,75 @@ class SpeechEngine {
         decodingMethod: 'modified_beam_search',
         maxActivePaths: BEAM_PATHS,
       });
+      await this.startWorker();
       this.ready = true;
     } catch (err) {
       this.loadError = err;
       throw err;
     }
+  }
+
+  /** The speaker-embedding model alone (all the voice-print worker needs). */
+  loadSpeakerModel() {
+    const { threads, speakerModel } = this.config;
+    this.extractor = new sherpa.SpeakerEmbeddingExtractor({ model: speakerModel, numThreads: Math.min(2, threads), debug: 0 });
+    this.speakerModelName = path.basename(speakerModel);
+  }
+
+  /** Starts the voice-print worker; without it (it failed to start or stopped) the work runs here. */
+  async startWorker() {
+    try {
+      this.worker = await new Promise((resolve, reject) => {
+        const worker = new Worker(path.join(__dirname, 'voice-worker.js'), { workerData: { config: this.config } });
+        worker.once('message', () => resolve(worker));
+        worker.once('error', reject);
+        worker.once('exit', (code) => reject(Object.assign(new Error('The voice-print worker stopped.'), { code })));
+      });
+    } catch (err) {
+      console.warn(`Voice prints are computed on the main thread (the worker did not start: ${err.message}).`);
+      return;
+    }
+    const worker = this.worker;
+    worker.unref(); // it must not keep scripts such as the evaluation running
+    worker.on('message', ({ id, result, error }) => {
+      const job = this.pending.get(id);
+      this.pending.delete(id);
+      if (!job) return;
+      if (!error) job.resolve(result);
+      else job.reject(error.template ? new HttpError(error.status, error.template, error.params) : Object.assign(new Error(error.message), { status: error.status }));
+    });
+    const stopped = (err) => {
+      if (this.worker !== worker) return;
+      console.error('The voice-print worker stopped; voice prints are computed on the main thread from now on:', err);
+      this.worker = null;
+      for (const job of this.pending.values()) job.reject(new Error('Computing the voice print failed.'));
+      this.pending.clear();
+    };
+    worker.on('error', stopped);
+    worker.on('exit', (code) => stopped(Object.assign(new Error('The voice-print worker stopped.'), { code })));
+  }
+
+  /**
+   * Length, speech and voice print of a recording, given as a WAV file or as samples at any rate,
+   * computed in the worker thread so that a long recording never stalls live transcription. With
+   * keepWav also the 16 kHz WAV file to store.
+   * @param {{ wav?: Uint8Array, samples?: Float32Array, sampleRate?: number, keepWav?: boolean }} input
+   * @returns {Promise<{ duration: number, speechSeconds: number, embedding: Float32Array | null, wav: Uint8Array | null }>}
+   */
+  analyzeRecording(input) {
+    if (!this.worker) return new Promise((resolve) => resolve(analyze(this, input)));
+    return new Promise((resolve, reject) => {
+      const id = ++this.jobSeq;
+      this.pending.set(id, { resolve, reject });
+      this.worker.postMessage({ id, input });
+    });
+  }
+
+  /** Stops the voice-print worker (tests and scripts that end before the process does). */
+  close() {
+    const worker = this.worker;
+    this.worker = null;
+    if (worker) worker.terminate();
   }
 
   /**
@@ -278,6 +345,26 @@ class SpeechEngine {
   }
 }
 
+/**
+ * The work of SpeechEngine.analyzeRecording(), in the worker (or on the main thread without it).
+ * WAV files are decoded here too: a 10-minute file is millions of samples.
+ * @param {SpeechEngine} engine
+ * @param {{ wav?: Uint8Array, samples?: Float32Array, sampleRate?: number, keepWav?: boolean }} input
+ */
+function analyze(engine, { wav, samples, sampleRate, keepWav = false }) {
+  const input = wav ? decodeWav(Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength)) : { samples, sampleRate };
+  const audio = engine.resample(input.samples, input.sampleRate);
+  const speech = engine.speechOnly(audio);
+  const encoded = keepWav ? encodeWav(audio, SAMPLE_RATE) : null;
+  return {
+    duration: audio.length / SAMPLE_RATE,
+    speechSeconds: speech.length / SAMPLE_RATE,
+    embedding: speech.length ? engine.embedLong(speech) : null,
+    // A view of its own buffer, so the worker can hand it over without a copy.
+    wav: encoded && new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength),
+  };
+}
+
 module.exports = {
-  SpeechEngine, SAMPLE_RATE, VAD_WINDOW, l2normalize, cosine, meanEmbedding, embeddingToBlob, embeddingFromBlob, spellable,
+  SpeechEngine, SAMPLE_RATE, VAD_WINDOW, l2normalize, cosine, meanEmbedding, embeddingToBlob, embeddingFromBlob, spellable, analyze,
 };

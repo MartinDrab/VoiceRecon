@@ -11,7 +11,6 @@ const { openDatabase } = require('./db');
 const { Auth, isLoopback, verifyPassword } = require('./auth');
 const { HttpError } = require('./errors');
 const { translate, languageOf } = require('./i18n');
-const { decodeWav } = require('./audio');
 const { SpeechEngine } = require('./speech/engine');
 const { VoiceManager } = require('./voices');
 const { TranscriptStore } = require('./transcripts');
@@ -84,9 +83,10 @@ const ownTranscript = (req) => {
   const t = transcripts.get(id(req.params.id));
   return t.user_id === req.user.id || req.user.role === 'admin' ? t : null;
 };
-const readWav = (req) => {
+/** The uploaded WAV file; it is decoded with the voice print, off the main thread. */
+const wavBody = (req) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Send the recording as a WAV file (Content-Type: audio/wav).');
-  return decodeWav(req.body); // throws HttpError(400) for files it cannot read
+  return req.body;
 };
 
 api.get('/setup', (req, res) => {
@@ -176,10 +176,9 @@ api.delete('/voices/:id', user, (req, res) => {
   voices.remove(id(req.params.id));
   res.json({ ok: true });
 });
-api.post('/voices/:id/samples', user, wav, (req, res) => {
-  const { samples, sampleRate } = readWav(req);
+api.post('/voices/:id/samples', user, wav, async (req, res) => {
   const label = typeof req.query.label === 'string' ? req.query.label : '';
-  res.status(201).json(voices.addSample(id(req.params.id), { samples, sampleRate, label }));
+  res.status(201).json(await voices.addSample(id(req.params.id), { wav: wavBody(req), label }));
 });
 api.get('/voices/:id/samples/:sid/audio', user, (req, res) => {
   res.type('audio/wav').sendFile(voices.samplePath(id(req.params.id), id(req.params.sid)));
@@ -192,14 +191,12 @@ api.delete('/voices/:id/learned', user, (req, res) => {
   voices.forgetLearned(id(req.params.id));
   res.json({ ok: true });
 });
-api.post('/identify', user, wav, (req, res) => {
+api.post('/identify', user, wav, async (req, res) => {
   if (!engine.ready) throw new HttpError(503, 'Speech models are still loading. Try again in a moment.');
-  const { samples, sampleRate } = readWav(req);
-  const speech = engine.speechOnly(engine.resample(samples, sampleRate));
-  const embedding = engine.embedLong(speech);
+  const { embedding, speechSeconds } = await engine.analyzeRecording({ wav: wavBody(req) });
   if (!embedding) throw new HttpError(400, 'Not enough speech in the recording.');
   const m = voices.identify(embedding);
-  res.json({ voiceId: m.voiceId, scores: m.scores, threshold: voices.threshold, speechSeconds: speech.length / 16000 });
+  res.json({ voiceId: m.voiceId, scores: m.scores, threshold: voices.threshold, speechSeconds });
 });
 api.put('/settings/threshold', admin, json, (req, res) => {
   voices.setThreshold(req.body.value);

@@ -202,13 +202,11 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
         if (!session) return send({ type: 'stopped' });
         session.finish().then(() => send({ type: 'stopped' }), fail);
       } else if (msg.type === 'saveUnknown') {
-        try {
-          if (!session) throw new Error('No transcription is running.');
-          const voiceId = session.saveUnknown(msg.speakerId, { name: msg.name, color: msg.color });
-          send({ type: 'saved', speakerId: msg.speakerId, voiceId });
-        } catch (err) {
-          send({ type: 'error', message: tr(err) });
-        }
+        if (!session) return send({ type: 'error', message: tr(new Error('No transcription is running.')) });
+        session.saveUnknown(msg.speakerId, { name: msg.name, color: msg.color }).then(
+          (voiceId) => send({ type: 'saved', speakerId: msg.speakerId, voiceId }),
+          (err) => send({ type: 'error', message: tr(err) }),
+        );
       } else if (msg.type === 'assignUnknown' || msg.type === 'correct') {
         try {
           if (!session) throw new Error('No transcription is running.');

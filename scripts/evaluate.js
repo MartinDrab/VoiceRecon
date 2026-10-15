@@ -242,7 +242,7 @@ async function main() {
       if (!ids.has(v.name)) ids.set(v.name, voices.create({ name: v.name, color: '#888888' }));
       try {
         const { samples, sampleRate } = readWav(v.file);
-        voices.addSample(ids.get(v.name), { samples, sampleRate });
+        await voices.addSample(ids.get(v.name), { samples, sampleRate });
       } catch (err) {
         console.warn(`Warning: ${v.name}: ${path.basename(v.file)} skipped: ${err.message}`);
       }

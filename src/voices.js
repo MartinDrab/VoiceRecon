@@ -5,10 +5,8 @@ const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
 const { HttpError } = require('./errors');
-const { decodeWav, encodeWav } = require('./audio');
-const {
-  SAMPLE_RATE, cosine, meanEmbedding, embeddingToBlob: toBlob, embeddingFromBlob: fromBlob,
-} = require('./speech/engine');
+const { decodeWav } = require('./audio');
+const { cosine, meanEmbedding, embeddingToBlob: toBlob, embeddingFromBlob: fromBlob } = require('./speech/engine');
 const { getSetting, setSetting } = require('./db');
 
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
@@ -201,26 +199,32 @@ class VoiceManager extends EventEmitter {
    * Adds a recording of the voice. Only the speech parts (found by VAD) are used for the
    * embedding; the full recording is stored so it can be played back and re-embedded later.
    */
-  addSample(voiceId, { samples, sampleRate, label = '' }) {
+  /**
+   * Adds a recording (a WAV file, or samples at any rate) to a voice. The voice print is computed
+   * in the speech engine's worker thread (SpeechEngine.analyzeRecording()).
+   * @param {number} voiceId
+   * @param {{ wav?: Uint8Array, samples?: Float32Array, sampleRate?: number, label?: string }} recording
+   */
+  async addSample(voiceId, { wav, samples, sampleRate, label = '' }) {
     this.get(voiceId);
     if (!this.engine.ready) throw new HttpError(503, 'Speech models are still loading. Try again in a moment.');
-    const audio = this.engine.resample(samples, sampleRate);
-    const duration = audio.length / SAMPLE_RATE;
+    const r = await this.engine.analyzeRecording({ wav, samples, sampleRate, keepWav: true });
+    const duration = r.duration;
     if (duration > MAX_SAMPLE_SECONDS) throw new HttpError(400, 'Recordings may be at most 10 minutes long.');
-    const speech = this.engine.speechOnly(audio);
-    const speechDuration = speech.length / SAMPLE_RATE;
+    const speechDuration = r.speechSeconds;
     if (speechDuration < MIN_SPEECH_SECONDS) {
       throw new HttpError(400, 'Not enough speech in the recording (found {found} s, need at least {need} s).', {
         found: speechDuration.toFixed(1),
         need: MIN_SPEECH_SECONDS,
       });
     }
-    const embedding = this.engine.embedLong(speech);
+    const embedding = r.embedding;
     if (!embedding) throw new HttpError(400, 'Could not compute a voice print from this recording.');
+    this.get(voiceId); // it may have been deleted meanwhile
 
     const file = `${voiceId}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.wav`;
     fs.mkdirSync(path.join(this.recordingsDir, String(voiceId)), { recursive: true });
-    fs.writeFileSync(path.join(this.recordingsDir, file), encodeWav(audio, SAMPLE_RATE));
+    fs.writeFileSync(path.join(this.recordingsDir, file), r.wav);
     const { lastInsertRowid } = this.db.prepare(
       'INSERT INTO voice_samples (voice_id, file, label, duration, speech_duration, embedding, model) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ).run(voiceId, file, String(label).slice(0, 120), duration, speechDuration, toBlob(embedding), this.engine.speakerModelName);

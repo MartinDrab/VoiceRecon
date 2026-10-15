@@ -52,6 +52,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 | `src/transcriber.js` | **Voice Transcriber**: VAD segmentation, interim/final results, speaker-change splitting, unknown-speaker clustering |
 | `src/voices.js` | **Voice Manager**: voices, recordings, voice prints (average, per recording, learned), `identify()`, learning from live speech and corrections |
 | `src/speech/engine.js` | Loads the models; ASR job queue (beam search with names and terms, `setHotwords`); `embed`, `embedLong`, `speechOnly`, `resample` |
+| `src/speech/voice-worker.js` | Worker thread for voice prints of whole recordings (`engine.analyzeRecording()`): decode, resample, find speech, embed, encode |
 | `src/auth.js` | Users, scrypt hashes, sessions, login throttling, Express guards |
 | `src/db.js` | SQLite (`node:sqlite`), migrations, settings |
 | `src/audio.js` | WAV decode/encode, PCM conversion, windowed-sinc `resample()` |
@@ -90,6 +91,7 @@ Uploaded files take the same path from step 2 on. The History page decodes the f
 - Interim text is cleared only after the utterance's final is emitted (`partialGen`), so text never disappears from the screen. Keep that order.
 - Embeddings are L2-normalized, so `cosine()` is a plain dot product. Normalize any new vector before comparing it.
 - Speaker-embedding work is synchronous native code (~10–30 ms per call). Loops over many embeddings must `await yieldToEventLoop()` between calls; otherwise audio ingestion stalls for every user.
+- Whole recordings (voice samples, *Test recognition*, saving an unknown speaker) go through `engine.analyzeRecording()`, which runs `analyze()` in `voice-worker.js` with its own speaker model: on the main thread a 10-minute recording stopped the server for 5.8 s; in the worker the slowest request meanwhile took 20 ms. Never call `speechOnly()`/`embedLong()` on a whole recording on the main thread (only `VoiceManager.init()` does, at startup, when the speaker model changed). If the worker fails, the work falls back to the main thread. `VoiceManager.addSample()` and `TranscriptionSession.saveUnknown()` are therefore async.
 - A voice scores its **best** print: the recordings' average, each recording (from two on), and the average of learned lines (`voice_learned`). Learning from live speech is gated by `identify(..., { enrolledOnly: true })`: never let learned prints take part in deciding what gets learned, or one wrong match feeds itself. A voice without recordings has no prints at all, whatever it learned.
 - Corrections (`correct` / `assignUnknown` WebSocket messages) use the embeddings the session keeps per final line id (`session.recent`); only lines of the current session can be corrected.
 - Every `voice_samples` row stores the speaker `model` that produced its embedding. `VoiceManager.init()` re-embeds rows from the stored WAVs when `SPEAKER_MODEL` changes, so keep the original recordings.

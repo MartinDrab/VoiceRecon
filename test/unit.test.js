@@ -11,7 +11,7 @@ const { openDatabase, getSetting, setSetting } = require('../src/db');
 const { Auth, hashPassword, verifyPassword, parseCookies } = require('../src/auth');
 const { VoiceManager } = require('../src/voices');
 const { TranscriptionSession, splitWords, dropLead, sentenceLines, wordsOf } = require('../src/transcriber');
-const { SpeechEngine, l2normalize, spellable } = require('../src/speech/engine');
+const { SpeechEngine, l2normalize, spellable, analyze } = require('../src/speech/engine');
 const { readHeader, titleFromName } = require('../src/uploads');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-test-'));
@@ -325,6 +325,54 @@ test('enrolled voices taking turns are cut where one clearly takes over from ano
   assert.deepStrictEqual(session.voiceChanges([w('A'), w('A'), w('B', true), w('A')]), [], 'an unclear window is no change');
   assert.deepStrictEqual(session.voiceChanges([w('A'), w('B'), w('A'), w('A')]), [1, 2], 'one clear window is enough');
   assert.deepStrictEqual(session.voiceChanges([w(null), w(null)]), []);
+});
+
+test('a recording is decoded, measured, voice-printed and re-encoded in one step (the job of the worker)', () => {
+  const calls = [];
+  const engine = {
+    resample: (samples, rate) => {
+      calls.push(`resample ${rate}`);
+      return samples;
+    },
+    speechOnly: (audio) => audio.subarray(0, 8000), // half a second of "speech"
+    embedLong: (speech) => Float32Array.of(speech.length),
+  };
+  const samples = Float32Array.from({ length: 16000 }, (_, i) => Math.sin(i / 20) / 2);
+  const r = analyze(/** @type {any} */ (engine), { wav: encodeWav(samples, 16000), keepWav: true });
+  assert.deepStrictEqual([r.duration, r.speechSeconds, [...r.embedding]], [1, 0.5, [8000]]);
+  assert.strictEqual(decodeWav(Buffer.from(r.wav)).samples.length, 16000, 'the stored file has the whole recording');
+  assert.ok(r.wav.byteOffset === 0 && r.wav.byteLength === r.wav.buffer.byteLength, 'its own buffer, so it can be handed over');
+  const silent = analyze(/** @type {any} */ ({ ...engine, speechOnly: () => new Float32Array(0) }), { samples, sampleRate: 48000 });
+  assert.deepStrictEqual([silent.embedding, silent.wav], [null, null]);
+  assert.deepStrictEqual(calls, ['resample 16000', 'resample 48000']);
+  assert.throws(() => analyze(/** @type {any} */ (engine), { wav: Buffer.from('not a wav file') }), /Not a WAV file/);
+});
+
+test('saving an unknown speaker waits for its voice print, once, and undoes the voice on failure', async () => {
+  const created = [];
+  const removed = [];
+  let fail = true;
+  const voices = {
+    create: () => created.push(created.length + 1) && created.length,
+    remove: (id) => removed.push(id),
+    addSample: async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      if (fail) throw new Error('Not enough speech in the recording.');
+    },
+  };
+  const session = new TranscriptionSession({ createVad: () => ({}) }, voices);
+  session.unknown = [{ id: 'u1', label: 'Speaker 1', centroid: null, count: 1, audio: [new Float32Array(10)], audioLen: 10 }];
+  const messages = [];
+  session.on('message', (m) => messages.push(m));
+
+  await assert.rejects(session.saveUnknown('u1', { name: 'Eva', color: '#ff0000' }), /Not enough speech/);
+  assert.deepStrictEqual(removed, [1], 'the new voice is removed again');
+  fail = false;
+  const saving = session.saveUnknown('u1', { name: 'Eva', color: '#ff0000' });
+  await assert.rejects(session.saveUnknown('u1', { name: 'Eva', color: '#ff0000' }), /no longer available/, 'a second click while saving');
+  assert.strictEqual(await saving, 2);
+  assert.deepStrictEqual(session.unknown, []);
+  assert.deepStrictEqual(messages, [{ type: 'relabel', from: { kind: 'unknown', id: 'u1', label: 'Speaker 1' }, to: { kind: 'voice', id: 2, score: 1 } }]);
 });
 
 test('voice manager validation and matching', () => {

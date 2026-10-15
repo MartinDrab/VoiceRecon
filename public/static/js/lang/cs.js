@@ -263,6 +263,7 @@ export default {
   'Recording added.': 'Nahrávka byla přidána.',
   '"{name}" is not an audio format this browser can read.': '„{name}“ není zvukový formát, který tento prohlížeč umí přečíst.',
   'Test recognition': 'Vyzkoušet rozpoznávání',
+  'Test': 'Vyzkoušet',
   'Record or upload a short clip to see how closely it matches each voice.':
     'Nahrajte krátkou ukázku mikrofonem nebo ze souboru a uvidíte, nakolik odpovídá jednotlivým hlasům.',
   'Upload clip': 'Nahrát soubor',
