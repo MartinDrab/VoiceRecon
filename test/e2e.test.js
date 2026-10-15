@@ -283,6 +283,13 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
       foreign.on('error', reject);
     }), /403/);
   } finally {
-    server.kill();
+    // Stop the server first: Windows keeps its database open, and so undeletable, until it exits.
+    if (server.exitCode === null && server.signalCode === null) {
+      await new Promise((resolve) => {
+        server.once('exit', resolve);
+        server.kill();
+      });
+    }
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 });
