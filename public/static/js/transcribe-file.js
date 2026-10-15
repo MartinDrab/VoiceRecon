@@ -3,7 +3,6 @@
 // that fills in while the server transcribes it in the background.
 
 import { upload, h, t, toast, formatPercent } from './common.js';
-import { wavFromInt16, SAMPLE_RATE } from './audio.js';
 import { chooseFileLength } from './file-length.js';
 
 const MAX_HOURS = 4; // as the server accepts (src/uploads.js)
@@ -43,7 +42,7 @@ async function chooseAndUpload(file, open) {
     defaultLength: 10 * 60,
   });
   if (!chosen || !chosen.length || card) return;
-  const { pcm, seconds } = chosen[0];
+  const { wav, seconds } = chosen[0];
 
   const controller = new AbortController();
   const text = h('span.grow');
@@ -70,7 +69,7 @@ async function chooseAndUpload(file, open) {
     // The recording most likely ended when the file was last written; times count from its start.
     const ended = file.lastModified ? Math.min(file.lastModified, Date.now()) : Date.now();
     const params = new URLSearchParams({ name: file.name, startedAt: String(Math.max(1, ended - Math.round(seconds * 1000))) });
-    const r = await upload(`/transcripts/upload?${params}`, wavFromInt16(pcm, SAMPLE_RATE), { signal: controller.signal, onProgress: show });
+    const r = await upload(`/transcripts/upload?${params}`, wav, { signal: controller.signal, onProgress: show });
     if (open) {
       location.href = `/history/${r.id}`;
       return;

@@ -1,9 +1,10 @@
 // The dialog shown after audio files are chosen for upload (recordings of a voice, a file to
-// transcribe): it reads them, shows how long they are, and asks whether to use each whole file
-// or only its first part, e.g. the first minute of a long recording of one person.
+// transcribe): it shows how long they are and asks whether to use each whole file or only its
+// first part, e.g. the first minute of a long recording of one person. Then it reads just that
+// part (media.js), with progress, as a 16 kHz WAV file to upload.
 
-import { h, t, plural, formatClock } from './common.js';
-import { decodeFile, SAMPLE_RATE } from './audio.js';
+import { h, t, plural, formatClock, formatPercent } from './common.js';
+import { openAudioFile } from './media.js';
 import { parseLength } from './duration.js';
 
 function readSetting(key) {
@@ -21,8 +22,8 @@ function writeSetting(key, value) {
 }
 
 /**
- * @typedef {{ file: File, pcm: Int16Array, seconds: number }} ChosenFile
- *   pcm: 16 kHz mono samples to upload (only the chosen part); seconds: the whole file's length
+ * @typedef {{ file: File, wav: Blob, seconds: number }} ChosenFile
+ *   wav: 16 kHz mono WAV of the chosen part, to upload; seconds: the whole file's length
  */
 
 /**
@@ -35,7 +36,8 @@ function writeSetting(key, value) {
  */
 export function chooseFileLength(files, { title, action, maxSeconds, storeKey, defaultLength }) {
   const remembered = parseLength(readSetting(storeKey) || '');
-  const rows = files.map((file) => ({ file, pcm: null, status: h('span.muted', {}, t('reading…')) }));
+  /** @type {{ file: File, audio: import('./media.js').AudioFile | null, status: HTMLElement }[]} */
+  const rows = files.map((file) => ({ file, audio: null, status: h('span.muted', {}, t('reading…')) }));
   const whole = h('input', { type: 'radio', name: 'length', value: 'whole', checked: true });
   const start = h('input', { type: 'radio', name: 'length', value: 'start' });
   const length = h('input.length-input', {
@@ -57,37 +59,44 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
   const error = h('p.error-text');
   const submit = h('button.btn.btn-primary', { type: 'submit', disabled: true }, action);
   const cancel = h('button.btn', { type: 'button' }, t('Cancel'));
+  const fieldset = h('fieldset.length-choice', {},
+    h('label.check', {}, whole, plural(files.length, 'The whole file', 'The whole files')),
+    h('label.check', {}, start, before, length, after));
   const form = h('form.dialog-body', {},
     h('h2', {}, title),
     h('ul.file-list', {}, rows.map((r) => h('li', {}, h('span.name', { title: r.file.name }, r.file.name), r.status))),
-    h('div.length-choice', {},
-      h('label.check', {}, whole, plural(files.length, 'The whole file', 'The whole files')),
-      h('label.check', {}, start, before, length, after)),
+    fieldset,
     error,
     h('div.buttons', {}, cancel, submit));
   const dialog = h('dialog.file-dialog', {}, form);
   document.body.append(dialog);
+  const controller = new AbortController(); // stops reading when the dialog is cancelled
 
   return new Promise((resolve) => {
     let done = false;
     const finish = (result) => {
       if (done) return;
       done = true;
+      controller.abort();
       dialog.close();
       dialog.remove();
       resolve(result);
     };
-    const readable = () => rows.filter((r) => r.pcm);
-    const tooLong = () => readable().some((r) => r.pcm.length / SAMPLE_RATE > maxSeconds);
+    const readable = () => rows.filter((r) => r.audio);
+    const tooLong = () => readable().some((r) => r.audio.duration > maxSeconds);
+    const busy = (on) => {
+      submit.disabled = on;
+      fieldset.disabled = on;
+    };
 
     cancel.addEventListener('click', () => finish(null));
     dialog.addEventListener('cancel', (e) => {
       e.preventDefault();
       finish(null);
     });
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      let limit = null;
+      let limit = Infinity;
       if (start.checked) {
         limit = parseLength(length.value);
         if (!(limit > 0)) {
@@ -106,11 +115,29 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
         error.textContent = t('A recording may be at most {max} long: use only its first part.', { max: formatClock(maxSeconds) });
         return;
       }
-      finish(readable().map((r) => ({
-        file: r.file,
-        seconds: r.pcm.length / SAMPLE_RATE,
-        pcm: limit ? r.pcm.subarray(0, Math.round(limit * SAMPLE_RATE)) : r.pcm,
-      })));
+      // Read the chosen part of each file now (only that part is decoded where the format allows).
+      error.textContent = '';
+      busy(true);
+      const chosen = [];
+      for (const r of readable()) {
+        const show = (fraction) => {
+          r.status.textContent = t('reading… {percent}', { percent: formatPercent(fraction) });
+        };
+        show(0);
+        try {
+          const { wav, seconds } = await r.audio.read(limit, show, controller.signal);
+          r.status.textContent = formatClock(seconds);
+          chosen.push({ file: r.file, wav, seconds });
+        } catch (err) {
+          if (done) return;
+          r.status.textContent = formatClock(r.audio.duration || 0);
+          error.textContent = err.message;
+          busy(false);
+          return;
+        }
+        if (done) return;
+      }
+      finish(chosen);
     });
 
     dialog.showModal();
@@ -118,9 +145,13 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
       const problems = [];
       for (const r of rows) {
         try {
-          r.pcm = await decodeFile(r.file);
-          r.status.textContent = formatClock(r.pcm.length / SAMPLE_RATE);
+          const audio = await openAudioFile(r.file);
+          // Formats the browser decodes whole: their length is known only after decoding.
+          if (audio.duration === null) await audio.read(Infinity, undefined, controller.signal);
+          r.audio = audio;
+          r.status.textContent = formatClock(audio.duration);
         } catch (err) {
+          if (done) return;
           r.status.textContent = t('cannot be read');
           r.status.className = 'unreadable';
           problems.push(err.message);

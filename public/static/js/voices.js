@@ -1,7 +1,7 @@
 import {
   api, h, icon, toast, initPage, formatDuration, nextColor, t, plural, locale, formatNumber,
 } from './common.js';
-import { MicRecorder, wavFromInt16, SAMPLE_RATE } from './audio.js';
+import { MicRecorder } from './audio.js';
 import { chooseFileLength } from './file-length.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
@@ -181,7 +181,7 @@ $('file-input').addEventListener('change', async (e) => {
       storeKey: 'voicerecon.testLength',
       defaultLength: 30,
     });
-    if (chosen && chosen.length) testClip(async () => wavFromInt16(chosen[0].pcm, SAMPLE_RATE));
+    if (chosen && chosen.length) testClip(async () => chosen[0].wav);
     return;
   }
   const voiceId = uploadTarget;
@@ -193,9 +193,9 @@ $('file-input').addEventListener('change', async (e) => {
     storeKey: 'voicerecon.recordingLength',
     defaultLength: 60,
   });
-  for (const { file, pcm } of chosen || []) {
+  for (const { file, wav } of chosen || []) {
     toast(t('Processing {name}…', { name: file.name }));
-    await run(() => uploadSample(voiceId, wavFromInt16(pcm, SAMPLE_RATE), file.name), t('Added {name}.', { name: file.name }));
+    await run(() => uploadSample(voiceId, wav, file.name), t('Added {name}.', { name: file.name }));
   }
 });
 

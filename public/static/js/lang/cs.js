@@ -151,6 +151,10 @@ export default {
 
   // reading chosen files: their length, and how much of each to use
   'reading…': 'načítání…',
+  'reading… {percent}': 'načítání… {percent}',
+  '"{name}" could not be read.': 'Soubor „{name}“ se nepodařilo přečíst.',
+  '"{name}" could not be read: in this format, the browser can only read shorter recordings. Recordings of any length can be read as M4A, MP4 or WAV.':
+    'Soubor „{name}“ se nepodařilo přečíst: v tomto formátu prohlížeč přečte jen kratší nahrávky. Nahrávky libovolné délky přečte ve formátu M4A, MP4 nebo WAV.',
   'cannot be read': 'nejde přečíst',
   'The whole file|The whole files': { one: 'Celý soubor', few: 'Celé soubory', other: 'Celé soubory' },
   'Only the first {0}|Only the first {0} of each': { one: 'Jen prvních {0}', few: 'Jen prvních {0} z každého', other: 'Jen prvních {0} z každého' },

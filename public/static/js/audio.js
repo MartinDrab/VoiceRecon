@@ -5,6 +5,7 @@ import { t } from './i18n.js';
 export const SAMPLE_RATE = 16000;
 
 const MIC_KEY = 'voicerecon.microphone';
+const LONG_FILE_BYTES = 50 << 20; // bigger files that fail to decode are most likely too long, not unreadable
 const PROCESSING = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
 /** The microphone chosen by the user as { id, label }, or null for the system default. */
@@ -134,9 +135,9 @@ export class MicRecorder {
 }
 
 /**
- * Decodes any audio (or video) file the browser can play into 16 kHz mono 16-bit samples. The
- * browser resamples while decoding, which keeps long files manageable: an hour of stereo takes
- * about 460 MB while decoding instead of 1.4 GB at 48 kHz.
+ * Decodes a whole audio (or video) file the browser can play into 16 kHz mono 16-bit samples.
+ * The browser decodes the whole file at its own rate first, so long recordings run out of memory
+ * (a 2-hour M4A failed); media.js reads MP4/M4A and WAV files piece by piece instead.
  * @param {File} file
  * @returns {Promise<Int16Array>}
  */
@@ -145,7 +146,10 @@ export async function decodeFile(file) {
   try {
     decoded = await new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(await file.arrayBuffer());
   } catch {
-    throw new Error(t('"{name}" is not an audio format this browser can read.', { name: file.name }));
+    // Most likely too long when the file is big; recordings of any length can be read as M4A/MP4 or WAV.
+    throw new Error(file.size > LONG_FILE_BYTES
+      ? t('"{name}" could not be read: in this format, the browser can only read shorter recordings. Recordings of any length can be read as M4A, MP4 or WAV.', { name: file.name })
+      : t('"{name}" is not an audio format this browser can read.', { name: file.name }));
   }
   const channels = Array.from({ length: decoded.numberOfChannels }, (_, c) => decoded.getChannelData(c));
   const pcm = new Int16Array(decoded.length);
@@ -159,10 +163,21 @@ export async function decodeFile(file) {
 }
 
 export function wavFromInt16(pcm, rate) {
+  return wavBlob([pcm], rate);
+}
+
+/**
+ * A mono 16-bit WAV file from pieces of samples (they need not be joined first: for long
+ * recordings that would need the memory twice).
+ * @param {Int16Array<ArrayBuffer>[]} chunks
+ * @param {number} rate
+ */
+export function wavBlob(chunks, rate) {
+  const bytes = chunks.reduce((n, c) => n + c.byteLength, 0);
   const header = new DataView(new ArrayBuffer(44));
   const writeStr = (o, s) => [...s].forEach((ch, i) => header.setUint8(o + i, ch.charCodeAt(0)));
   writeStr(0, 'RIFF');
-  header.setUint32(4, 36 + pcm.byteLength, true);
+  header.setUint32(4, 36 + bytes, true);
   writeStr(8, 'WAVE');
   writeStr(12, 'fmt ');
   header.setUint32(16, 16, true);
@@ -173,6 +188,6 @@ export function wavFromInt16(pcm, rate) {
   header.setUint16(32, 2, true);
   header.setUint16(34, 16, true);
   writeStr(36, 'data');
-  header.setUint32(40, pcm.byteLength, true);
-  return new Blob([header, pcm], { type: 'audio/wav' });
+  header.setUint32(40, bytes, true);
+  return new Blob([header, ...chunks], { type: 'audio/wav' });
 }
