@@ -1,0 +1,234 @@
+'use strict';
+
+/**
+ * End-to-end test: starts the real server on a free port with an empty data directory, creates
+ * the administrator, enrolls two synthetic Czech voices, streams a recorded conversation over the
+ * WebSocket like the browser does and checks who said what.
+ *
+ * Needs the speech models and the test fixtures:
+ *   npm run models -- --test && node scripts/make-test-audio.js
+ */
+
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const net = require('net');
+const { spawn } = require('child_process');
+const WebSocket = require('ws');
+const config = require('../src/config');
+
+const FIXTURES = path.join(__dirname, 'fixtures');
+const haveModels = fs.existsSync(config.asr.encoder) && fs.existsSync(path.join(FIXTURES, 'reference.txt'));
+
+function freePort() {
+  return new Promise((resolve) => {
+    const srv = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+function normalize(s) {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z ]/g, ' ').split(/\s+/).filter(Boolean);
+}
+
+/** Share of reference words found in the hypothesis (order-insensitive, accent-insensitive). */
+function wordRecall(ref, hyp) {
+  const h = normalize(hyp);
+  const r = normalize(ref);
+  return r.filter((w) => h.includes(w)).length / r.length;
+}
+
+test('live transcription with speaker recognition', { skip: !haveModels && 'models or fixtures missing', timeout: 180000 }, async () => {
+  const port = await freePort();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-e2e-'));
+  const server = spawn(process.execPath, [path.join(config.root, 'src', 'server.js')], {
+    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let log = '';
+  server.stdout.on('data', (d) => (log += d));
+  server.stderr.on('data', (d) => (log += d));
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    // wait until the models are loaded
+    for (let i = 0; !log.includes('Speech models ready'); i++) {
+      if (i > 600 || server.exitCode !== null) throw new Error(`Server did not start:\n${log}`);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    let cookie = '';
+    const call = async (method, url, body, type = 'application/json') => {
+      const res = await fetch(base + url, {
+        method,
+        headers: { cookie, ...(body !== undefined ? { 'content-type': type } : {}) },
+        body: body === undefined ? undefined : type === 'application/json' ? JSON.stringify(body) : body,
+      });
+      const set = res.headers.get('set-cookie');
+      if (set) cookie = set.split(';')[0];
+      const data = await res.json();
+      if (!res.ok) throw new Error(`${method} ${url}: ${res.status} ${data.error}`);
+      return data;
+    };
+
+    assert.strictEqual((await fetch(`${base}/api/voices`)).status, 401, 'API requires login');
+    // a request without a JSON body gets a validation error, not a server error
+    assert.strictEqual((await fetch(`${base}/api/login`, { method: 'POST' })).status, 401);
+    assert.deepStrictEqual(await call('GET', '/api/setup'), { needed: true, allowed: true });
+    await call('POST', '/api/setup', { username: 'admin', password: 'admin-password' });
+    await assert.rejects(call('POST', '/api/setup', { username: 'admin2', password: 'admin-password' }), /409/);
+
+    const ids = {};
+    for (const [name, color] of [['jirka', '#e5484d'], ['coqui', '#3e63dd']]) {
+      ids[name] = (await call('POST', '/api/voices', { name, color })).id;
+      const wav = fs.readFileSync(path.join(FIXTURES, 'voices', `${name}.wav`));
+      const s = await call('POST', `/api/voices/${ids[name]}/samples?label=enroll`, wav, 'audio/wav');
+      assert.ok(s.speechDuration > 5);
+    }
+    const names = Object.fromEntries(Object.entries(ids).map(([k, v]) => [v, k]));
+
+    const ident = await call('POST', '/api/identify', fs.readFileSync(path.join(FIXTURES, 'voices', 'coqui.wav')), 'audio/wav');
+    assert.strictEqual(ident.voiceId, ids.coqui);
+    assert.strictEqual((await fetch(`${base}/api/voices`, { method: 'POST', headers: { cookie } })).status, 400);
+
+    // malformed upgrade requests are refused instead of crashing the server
+    const upgrade = (headers) => new Promise((resolve, reject) => {
+      const w = new WebSocket(`ws://127.0.0.1:${port}/ws/transcribe`, { headers });
+      w.on('open', () => resolve('open'));
+      w.on('error', (e) => resolve(e.message));
+      setTimeout(() => reject(new Error('no answer')), 5000);
+    });
+    assert.match(await upgrade({ cookie: 'other=50%; vr_session=%zz' }), /401/);
+    assert.strictEqual((await fetch(`${base}/api/setup`, { headers: { cookie: 'other=50%' } })).status, 200);
+
+    // stream the conversation as 100 ms PCM frames, 4x faster than real time
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/transcribe`, { headers: { cookie, origin: base } });
+    const finals = [];
+    let partials = 0;
+    let clearedBeforeFinal = 0; // interim text must stay until its final result replaces it
+    let shown = false;
+    const errors = [];
+    let transcriptId = null;
+    const waiting = new Map(); // message type -> resolve
+    // Every wait has a time limit, so a missing message fails the test instead of hanging it.
+    const within = (promise, what, ms = 15000) => Promise.race([promise, new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`Timed out waiting for ${what}`)), ms).unref();
+    })]);
+    const next = (type) => within(new Promise((resolve) => waiting.set(type, resolve)), `a "${type}" message`);
+    const stopped = new Promise((resolve, reject) => {
+      ws.on('message', (data) => {
+        const m = JSON.parse(String(data));
+        if (waiting.has(m.type)) {
+          waiting.get(m.type)(m);
+          waiting.delete(m.type);
+        }
+        if (m.type === 'final') {
+          finals.push(m);
+          shown = false;
+        }
+        if (m.type === 'partial' && m.text) {
+          partials++;
+          shown = true;
+        }
+        if (m.type === 'partial' && !m.text && shown) clearedBeforeFinal++;
+        if (m.type === 'error') errors.push(m.message);
+        if (m.type === 'transcript' && m.id) transcriptId = m.id;
+        if (m.type === 'stopped') resolve();
+      });
+      ws.on('error', reject);
+    });
+    await new Promise((r) => ws.on('open', r));
+    ws.send('null'); // invalid messages are answered with an error and must not stop the server
+    ws.send(JSON.stringify({ type: 'start' }));
+    const wav = fs.readFileSync(path.join(FIXTURES, 'conversation.wav'));
+    const pcm = wav.subarray(44);
+    for (let o = 0; o < pcm.length; o += 3200) {
+      ws.send(pcm.subarray(o, o + 3200));
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    ws.send(JSON.stringify({ type: 'stop' }));
+    await stopped;
+    const expected = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'conversation.json'), 'utf8'));
+
+    // correcting a line teaches the chosen voice how it sounded
+    const corrected = next('corrected');
+    ws.send(JSON.stringify({ type: 'correct', ids: [finals[0].id], voiceId: ids.coqui }));
+    assert.deepStrictEqual(await corrected, { type: 'corrected', ids: [finals[0].id], voiceId: ids.coqui, learned: 1 });
+    const learnedOf = async (name) => (await call('GET', '/api/voices')).voices.find((v) => v.id === ids[name]).learned;
+    assert.deepStrictEqual(await learnedOf('coqui'), { live: 0, correction: 1 });
+    await call('DELETE', `/api/voices/${ids.coqui}/learned`);
+    assert.deepStrictEqual(await learnedOf('coqui'), { live: 0, correction: 0 });
+    const rejected = next('error');
+    ws.send(JSON.stringify({ type: 'correct', ids: [finals[0].id], voiceId: 999999 }));
+    assert.match((await rejected).message, /Voice not found/);
+
+    // the session was saved as a transcript, including the correction
+    assert.ok(transcriptId, 'a transcript was created');
+    let saved = await call('GET', `/api/transcripts/${transcriptId}`);
+    assert.strictEqual(saved.lines.length, expected.length);
+    assert.deepStrictEqual(saved.lines.map((l) => l.text), finals.map((f) => f.text));
+    assert.strictEqual(saved.lines[0].speaker.voiceId, ids.coqui, 'the live correction reached the saved line');
+    assert.deepStrictEqual(saved.lines.slice(1).map((l) => names[l.speaker.voiceId]), expected.slice(1).map((e) => e.voice));
+    assert.ok(Math.abs(saved.lines[1].start - finals[1].start) < 0.01);
+    assert.strictEqual((await call('GET', '/api/transcripts?q=dovolene')).total, 1, 'search ignores diacritics');
+    const srt = await (await fetch(`${base}/api/transcripts/${transcriptId}/export?format=srt`, { headers: { cookie } })).text();
+    assert.strictEqual(srt.match(/-->/g).length, expected.length);
+
+    // a reconnecting page continues the same transcript; "New transcript" starts another
+    const fresh = next('transcript');
+    ws.send(JSON.stringify({ type: 'newTranscript' }));
+    assert.strictEqual((await fresh).id, null);
+    ws.close();
+    const ws2 = new WebSocket(`ws://127.0.0.1:${port}/ws/transcribe`, { headers: { cookie, origin: base } });
+    const announced = new Promise((resolve) => ws2.on('message', (d) => {
+      const m = JSON.parse(String(d));
+      if (m.type === 'transcript') resolve(m.id);
+    }));
+    await within(new Promise((r) => ws2.on('open', r)), 'the second connection');
+    ws2.send(JSON.stringify({ type: 'start', transcriptId }));
+    assert.strictEqual(await within(announced, 'the resumed transcript'), transcriptId);
+    ws2.close();
+
+    // editing in History: move a line to a typed name, fix its text, then delete the transcript
+    await call('POST', `/api/transcripts/${transcriptId}/speaker`, { lineIds: [saved.lines[1].id], speaker: { label: 'Host' } });
+    await call('PATCH', `/api/transcripts/${transcriptId}/lines/${saved.lines[1].id}`, { text: 'Opravený text.' });
+    saved = await call('GET', `/api/transcripts/${transcriptId}`);
+    assert.deepStrictEqual([saved.lines[1].speaker.name, saved.lines[1].text, saved.lines[1].edited], ['Host', 'Opravený text.', true]);
+    for (const pagePath of ['/history', `/history/${transcriptId}`]) {
+      const page = await fetch(base + pagePath, { headers: { cookie } });
+      assert.strictEqual(page.status, 200, pagePath);
+    }
+    await call('DELETE', `/api/transcripts/${transcriptId}`);
+    assert.strictEqual((await fetch(`${base}/api/transcripts/${transcriptId}`, { headers: { cookie } })).status, 404);
+
+    assert.strictEqual((await call('GET', '/api/voices')).learnFromSpeech, false);
+    await call('PUT', '/api/settings/learn', { enabled: true });
+    assert.strictEqual((await call('GET', '/api/voices')).learnFromSpeech, true);
+
+    const got = finals.map((f) => `${f.start.toFixed(1)}-${f.end.toFixed(1)} <${names[f.speaker.id] || f.speaker.label}> ${f.text}`);
+    assert.strictEqual(finals.length, expected.length, `turns:\n${got.join('\n')}`);
+    for (let i = 0; i < expected.length; i++) {
+      assert.strictEqual(finals[i].speaker.kind, 'voice', got[i]);
+      assert.strictEqual(names[finals[i].speaker.id], expected[i].voice, got[i]);
+      assert.ok(Math.abs(finals[i].start - expected[i].start) < 0.5, `start of ${got[i]}`);
+    }
+    const recall = expected.reduce((n, e, i) => n + wordRecall(e.text, finals[i].text), 0) / expected.length;
+    assert.ok(recall > 0.8, `word recall ${recall.toFixed(2)}\n${got.join('\n')}`);
+    assert.ok(partials > 0, 'interim results were sent');
+    assert.strictEqual(clearedBeforeFinal, 0, 'interim text was removed before its final result arrived');
+    assert.deepStrictEqual(errors, ['Invalid message.', 'Voice not found.']);
+
+    // a WebSocket from another origin is refused
+    const foreign = new WebSocket(`ws://127.0.0.1:${port}/ws/transcribe`, { headers: { cookie, origin: 'http://evil.example' } });
+    await assert.rejects(new Promise((resolve, reject) => {
+      foreign.on('open', resolve);
+      foreign.on('error', reject);
+    }), /403/);
+  } finally {
+    server.kill();
+  }
+});

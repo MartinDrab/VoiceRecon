@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcript · VoiceRecon</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script src="/static/js/theme.js"></script>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/history-view.js"></script>
+</head>
+<body>
+  <main class="page">
+    <a class="back-link" href="/history" id="back">← All transcripts</a>
+    <div class="page-head view-head">
+      <div class="grow">
+        <input type="text" class="title-input" id="title" maxlength="120" aria-label="Title">
+        <p class="muted small" id="meta"></p>
+        <div class="chips" id="speakers"></div>
+      </div>
+      <div class="row">
+        <a class="btn btn-sm" id="export-txt" title="Text with times">TXT</a>
+        <a class="btn btn-sm" id="export-srt" title="Subtitles">SRT</a>
+        <a class="btn btn-sm" id="export-json" title="All data">JSON</a>
+        <button class="btn btn-sm" id="refresh" title="Reload"></button>
+        <button class="btn btn-sm btn-danger hidden" id="delete">Delete</button>
+      </div>
+    </div>
+    <p class="muted small">Click a name to change who spoke, or a line's pencil to fix its text. Moving lines to a voice also teaches that voice how they sounded.</p>
+    <div class="card history-lines" id="lines"></div>
+  </main>
+
+  <dialog id="speaker-dialog">
+    <div class="dialog-body">
+      <h2>Who said this?</h2>
+      <div class="scope" id="scope"></div>
+      <div class="voice-choices" id="choices"></div>
+      <form id="other-form" class="dialog-section">
+        <label class="field">Someone else
+          <input type="text" id="other-name" maxlength="60" autocomplete="off" placeholder="Name">
+        </label>
+        <div class="buttons"><button class="btn" type="submit">Use this name</button></div>
+      </form>
+      <p class="error-text" id="speaker-error"></p>
+      <div class="buttons"><button class="btn" type="button" id="speaker-cancel">Cancel</button></div>
+    </div>
+  </dialog>
+</body>
+</html>

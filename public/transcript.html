@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcript · VoiceRecon</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script src="/static/js/theme.js"></script>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/transcript.js"></script>
+</head>
+<body class="transcript-page">
+  <div class="tx-shell">
+    <header class="tx-bar" id="bar">
+      <a class="brand" href="/voices" title="Manage voices">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v18M8 7v10M4 10v4M16 6v12M20 9v6" stroke-linecap="round"/></svg>
+      </a>
+      <button class="btn btn-rec" id="rec" disabled>Start</button>
+      <div class="tx-status">
+        <span class="dot" id="dot"></span>
+        <span id="status">Connecting…</span>
+        <div class="level hide-sm" title="Microphone level"><div id="level"></div></div>
+      </div>
+      <div class="grow"></div>
+      <button class="btn btn-ghost btn-icon hide-sm" id="smaller" title="Smaller text (−)">A−</button>
+      <button class="btn btn-ghost btn-icon hide-sm" id="larger" title="Larger text (+)">A+</button>
+      <div class="menu">
+        <button class="btn btn-ghost btn-icon" id="menu-btn" title="Menu" aria-haspopup="true" aria-expanded="false"></button>
+        <div class="menu-pop hidden" id="menu" role="menu">
+          <button id="download" role="menuitem">Download transcript</button>
+          <button id="download-audio" role="menuitem" class="hidden">Download recording</button>
+          <button id="keep-audio" role="menuitemcheckbox" aria-checked="false" title="Keeps the microphone audio in this tab so it can be downloaded, e.g. to measure accuracy">Keep audio for download</button>
+          <button id="clear" role="menuitem" title="The current transcript stays saved in History">New transcript</button>
+          <button id="fullscreen" role="menuitem">Full screen</button>
+          <button id="theme" role="menuitem" title="Cycles System, Light and Dark">Theme: System</button>
+          <hr>
+          <a href="/history" role="menuitem" id="history-link">History</a>
+          <a href="/voices" role="menuitem">Voices</a>
+          <a href="/users" role="menuitem" id="users-link">Users</a>
+          <hr>
+          <button id="logout" role="menuitem">Log out</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="tx-scroll" id="scroll">
+      <div class="transcript" id="transcript" aria-live="polite"></div>
+      <div class="tx-empty" id="empty">
+        <div>
+          <p>Press <kbd>Start</kbd> or <kbd>Space</kbd> to start listening.</p>
+          <p class="small">Speech appears here in real time, colored by who is speaking.</p>
+        </div>
+      </div>
+    </div>
+    <button class="btn jump hidden" id="jump">↓ Jump to latest</button>
+  </div>
+
+  <dialog id="who-dialog">
+    <div class="dialog-body">
+      <h2>Who said this?</h2>
+      <p class="muted small" id="who-hint"></p>
+      <div class="voice-choices" id="who-choices"></div>
+      <form method="dialog" id="save-form" class="dialog-section">
+        <p class="small"><strong>Or save as a new voice</strong></p>
+        <div class="row">
+          <input type="color" name="color" id="save-color" title="Color">
+          <label class="field grow">Name
+            <input type="text" name="name" id="save-name" required maxlength="60" autocomplete="off">
+          </label>
+        </div>
+        <div class="buttons">
+          <button class="btn btn-primary" type="submit">Save voice</button>
+        </div>
+      </form>
+      <p class="error-text" id="who-error"></p>
+      <div class="buttons">
+        <button class="btn" type="button" id="who-cancel">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>

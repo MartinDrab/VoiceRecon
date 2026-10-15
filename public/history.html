@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>History · VoiceRecon</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script src="/static/js/theme.js"></script>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/history.js"></script>
+</head>
+<body>
+  <main class="page">
+    <div class="page-head">
+      <div>
+        <h1>History</h1>
+        <p class="muted">Transcripts are saved automatically while you listen.</p>
+      </div>
+      <input type="search" id="search" class="search" placeholder="Search all transcripts" aria-label="Search all transcripts" autocomplete="off">
+    </div>
+    <p class="muted small" id="note"></p>
+    <div class="history-list" id="list"></div>
+    <div class="row more-row"><button class="btn hidden" id="more">Show more</button></div>
+  </main>
+</body>
+</html>

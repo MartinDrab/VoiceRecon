@@ -1,0 +1,23 @@
+{
+  "name": "voicerecon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Realtime speech-to-text with speaker recognition (Czech and English), running fully offline.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "models": "node scripts/download-models.js",
+    "create-user": "node scripts/create-user.js",
+    "evaluate": "node scripts/evaluate.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "sherpa-onnx-node": "1.13.8",
+    "ws": "^8.22.0"
+  }
+}

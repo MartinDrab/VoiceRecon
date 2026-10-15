@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · VoiceRecon</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script src="/static/js/theme.js"></script>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/login.js"></script>
+</head>
+<body>
+  <div class="corner" id="corner"></div>
+  <div class="auth-wrap">
+    <div class="card auth-card">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v18M8 7v10M4 10v4M16 6v12M20 9v6" stroke-linecap="round"/></svg>
+        VoiceRecon
+      </div>
+
+      <form id="login-form" class="hidden">
+        <label class="field">Username
+          <input type="text" name="username" autocomplete="username" required autofocus>
+        </label>
+        <label class="field">Password
+          <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button class="btn btn-primary" type="submit">Sign in</button>
+        <p class="error-text" id="login-error"></p>
+      </form>
+
+      <form id="setup-form" class="hidden">
+        <p class="muted small">Welcome! Create the administrator account to get started.</p>
+        <label class="field">Username
+          <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+">
+        </label>
+        <label class="field">Password
+          <input type="password" name="password" autocomplete="new-password" required minlength="8">
+        </label>
+        <label class="field">Confirm password
+          <input type="password" name="confirm" autocomplete="new-password" required minlength="8">
+        </label>
+        <button class="btn btn-primary" type="submit">Create administrator</button>
+        <p class="error-text" id="setup-error"></p>
+      </form>
+
+      <div id="setup-remote" class="notice warn hidden">
+        No accounts exist yet. Open VoiceRecon in a browser on the computer that runs it
+        (http://localhost) to create the administrator account.
+      </div>
+    </div>
+  </div>
+</body>
+</html>
