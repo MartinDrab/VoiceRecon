@@ -138,9 +138,7 @@ export default {
   'Transcribe a file': 'Přepsat soubor',
   'Any audio or video file the browser can play: MP3, M4A, WAV, OGG, FLAC, WebM, …':
     'Jakýkoli zvukový nebo video soubor, který prohlížeč umí přehrát: MP3, M4A, WAV, OGG, FLAC, WebM, …',
-  'Reading “{name}”…': 'Načítání souboru „{name}“…',
   'Uploading “{name}”… {percent}': 'Odesílání souboru „{name}“… {percent}',
-  'Recordings may be at most {hours} hours long.': 'Nahrávka může být dlouhá nejvýše {hours} hodiny.',
   'The upload failed. Check the connection and try again.': 'Odeslání se nezdařilo. Zkontrolujte připojení a zkuste to znovu.',
   'waiting to be transcribed': 'čeká na přepis',
   'transcribing: {percent}': 'přepisuje se: {percent}',
@@ -148,6 +146,20 @@ export default {
   'Stop transcribing': 'Zastavit přepis',
   'Stop transcribing this recording? The lines found so far stay.': 'Zastavit přepis této nahrávky? Dosud přepsané řádky zůstanou.',
   'The recording is transcribed.': 'Nahrávka je přepsaná.',
+  'Transcribe': 'Přepsat',
+
+  // reading chosen files: their length, and how much of each to use
+  'reading…': 'načítání…',
+  'cannot be read': 'nejde přečíst',
+  'The whole file|The whole files': { one: 'Celý soubor', few: 'Celé soubory', other: 'Celé soubory' },
+  'Only the first {0}|Only the first {0} of each': { one: 'Jen prvních {0}', few: 'Jen prvních {0} z každého', other: 'Jen prvních {0} z každého' },
+  'Length of the part to use': 'Délka použité části',
+  'Minutes:seconds, e.g. 1:30': 'Minuty:sekundy, např. 1:30',
+  'Enter the length as minutes:seconds, e.g. 1:30.': 'Zadejte délku jako minuty:sekundy, např. 1:30.',
+  'At most {max} can be used.': 'Použít jde nejvýše {max}.',
+  'A recording may be at most {max} long: use only its first part.': 'Nahrávka může být dlouhá nejvýše {max}: použijte jen její začátek.',
+  'Add recordings to “{name}”': 'Přidat nahrávky k hlasu „{name}“',
+  'Add the recording|Add {n} recordings': { one: 'Přidat nahrávku', few: 'Přidat {n} nahrávky', other: 'Přidat {n} nahrávek' },
   'Transcribing stopped.': 'Přepis byl zastaven.',
 
   // one saved transcript

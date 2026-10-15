@@ -469,9 +469,6 @@ input.search { width: min(360px, 100%); }
 .upload-card { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .progress { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .progress > div { height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 0.2s; }
-.progress > div.indeterminate { width: 30%; animation: progress-slide 1.2s ease-in-out infinite; }
-@keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
-@media (prefers-reduced-motion: reduce) { .progress > div.indeterminate { animation: none; width: 100%; opacity: 0.5; } }
 .history-list { display: flex; flex-direction: column; gap: 0.75rem; }
 .history-item { display: flex; flex-direction: column; gap: 0.4rem; padding: 1rem 1.25rem; }
 .history-title { font-weight: 650; font-size: 1.05rem; color: var(--text); }
@@ -549,6 +546,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .hline.flash { animation: flash 2.4s ease-out; }
 @keyframes flash { 0%, 40% { background: var(--highlight); } }
 .scope { display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.9rem; }
+.file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; max-height: 30vh; overflow-y: auto; font-size: 0.9rem; }
+.file-list li { display: flex; justify-content: space-between; gap: 0.75rem; }
+.file-list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-list .unreadable { color: var(--danger); white-space: nowrap; }
+.length-choice { display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.9rem; }
+.length-choice label.check { flex-wrap: wrap; }
+label.check input.length-input { width: 6.5rem; height: auto; padding: 0.3rem 0.5rem; }
 @media (hover: none) { .hline-actions { opacity: 1; } }
 @media (max-width: 640px) {
   .hline { grid-template-columns: 1fr auto; }

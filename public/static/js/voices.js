@@ -1,7 +1,8 @@
 import {
   api, h, icon, toast, initPage, formatDuration, nextColor, t, plural, locale, formatNumber,
 } from './common.js';
-import { MicRecorder, fileToWav } from './audio.js';
+import { MicRecorder, fileToWav, wavFromInt16, SAMPLE_RATE } from './audio.js';
+import { chooseFileLength } from './file-length.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
@@ -11,6 +12,7 @@ let recorder = null; // { rec, target: voiceId | 'test', timer }
 let player = null; // { audio, sampleId }
 let uploadTarget = null;
 let pollTimer = null;
+const MAX_RECORDING_SECONDS = 10 * 60; // as the server accepts (src/voices.js)
 
 /** Recordings saved from the transcript page carry this label (in English, like all stored labels). */
 const sampleLabel = (label) => (label === 'From live transcript' ? t('From live transcript') : label);
@@ -171,9 +173,17 @@ $('file-input').addEventListener('change', async (e) => {
     return;
   }
   const voiceId = uploadTarget;
-  for (const file of files) {
+  const voice = state.voices.find((v) => v.id === voiceId);
+  const chosen = await chooseFileLength(files, {
+    title: t('Add recordings to “{name}”', { name: voice ? voice.name : '' }),
+    action: plural(files.length, 'Add the recording', 'Add {n} recordings'),
+    maxSeconds: MAX_RECORDING_SECONDS,
+    storeKey: 'voicerecon.recordingLength',
+    defaultLength: 60,
+  });
+  for (const { file, pcm } of chosen || []) {
     toast(t('Processing {name}…', { name: file.name }));
-    await run(async () => uploadSample(voiceId, await fileToWav(file), file.name), t('Added {name}.', { name: file.name }));
+    await run(() => uploadSample(voiceId, wavFromInt16(pcm, SAMPLE_RATE), file.name), t('Added {name}.', { name: file.name }));
   }
 });
 

@@ -41,3 +41,15 @@ test('both themes define every color token', () => {
   const light = names(block(':root {')).filter((n) => !['--radius', '--font'].includes(n));
   assert.deepStrictEqual(names(block(':root[data-theme="dark"]')), light);
 });
+
+test('lengths of audio are read as seconds, minutes:seconds or hours:minutes:seconds', () => {
+  const sandbox = {};
+  const source = fs.readFileSync(path.join(PUBLIC, 'static', 'js', 'duration.js'), 'utf8');
+  require('vm').runInNewContext(source.replace(/^export /gm, ''), sandbox);
+  const { parseLength } = sandbox;
+  const cases = { '90': 90, '1:30': 90, ' 0:45 ': 45, '0:45.5': 45.5, '0:45,5': 45.5, '1:02:03': 3723, '10:00': 600, '0': 0 };
+  for (const [text, seconds] of Object.entries(cases)) assert.strictEqual(parseLength(text), seconds, text);
+  for (const text of ['', '1:', ':30', '1:60', '1:2:3:4', '1.5:00', 'abc', '-5', '1:30 min']) {
+    assert.ok(Number.isNaN(parseLength(text)), text);
+  }
+});

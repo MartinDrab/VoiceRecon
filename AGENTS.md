@@ -72,7 +72,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 5. The serialized `this.chain` then splits the utterance where the voice changes (`speakerTurns`), assigns each part to a voice or unknown speaker (`assignSpeaker`), and emits `final` messages followed by the interim-clear message.
 6. `VoiceManager` emits `changed` on any edit; `ws.js` then broadcasts the voice list, so open transcripts recolor and rename immediately.
 
-Uploaded files take the same path from step 2 on. The History page decodes the file in the browser (`decodeFile()` in `audio.js`, any format the browser plays) and uploads it as 16 kHz mono 16-bit WAV (`POST /api/transcripts/upload`, streamed to disk). `UploadQueue` creates the transcript at once and feeds the file to a `TranscriptionSession` with `{ interim: false, learn: false, background: true }`, a few seconds at a time, waiting for `session.settled()` in between. Progress is in `TranscriptStore.processing` (in memory, like `recording`).
+Uploaded files take the same path from step 2 on. The History page decodes the file in the browser (`decodeFile()` in `audio.js`, any format the browser plays; the dialog in `file-length.js`, shared with voice recordings on the Voices page, shows its length and cuts it to its first part if the user wants) and uploads it as 16 kHz mono 16-bit WAV (`POST /api/transcripts/upload`, streamed to disk). `UploadQueue` creates the transcript at once and feeds the file to a `TranscriptionSession` with `{ interim: false, learn: false, background: true }`, a few seconds at a time, waiting for `session.settled()` in between. Progress is in `TranscriptStore.processing` (in memory, like `recording`).
 
 ## Invariants: don't break these
 
