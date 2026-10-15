@@ -12,6 +12,7 @@ const { Auth, hashPassword, verifyPassword, parseCookies } = require('../src/aut
 const { VoiceManager } = require('../src/voices');
 const { TranscriptionSession, splitWords } = require('../src/transcriber');
 const { SpeechEngine, l2normalize } = require('../src/speech/engine');
+const { readHeader, titleFromName } = require('../src/uploads');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-test-'));
 
@@ -170,6 +171,54 @@ test('speech engine queue: finals before interims, cancel drops queued jobs', as
   await Promise.all(jobs);
   assert.deepStrictEqual(order, ['a-interim:', 'b-final:', 'running:x', 'a-final:x']);
   assert.ok(engine.idle);
+});
+
+test('speech engine queue: uploaded files wait behind live work and do not block interim results', async () => {
+  const engine = new SpeechEngine({});
+  const order = [];
+  const gates = [];
+  engine.recognizer = {
+    createStream: () => ({ acceptWaveform() {} }),
+    decodeAsync: () => new Promise((resolve) => gates.push(() => resolve({ text: 'x' }))),
+  };
+  const track = (name, p) => p.then(() => order.push(name));
+  const jobs = [track('file-1', engine.transcribe(new Float32Array(1), { background: true }))];
+  assert.ok(engine.idle, 'a running file job leaves room for interim results');
+  jobs.push(
+    track('file-2', engine.transcribe(new Float32Array(1), { background: true })),
+    track('interim', engine.transcribe(new Float32Array(1), { interim: true })),
+    track('final', engine.transcribe(new Float32Array(1))),
+  );
+  assert.ok(!engine.idle);
+  while (order.length < 4) {
+    await new Promise((r) => setImmediate(r));
+    if (gates.length) gates.shift()();
+  }
+  await Promise.all(jobs);
+  assert.deepStrictEqual(order, ['file-1', 'final', 'interim', 'file-2']);
+});
+
+test('uploaded recordings: only 16 kHz mono 16-bit WAV, data size from the file when streamed', async () => {
+  const dir = tmp();
+  const write = (name, buf) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, buf);
+    return file;
+  };
+  const wav = encodeWav(new Float32Array(16000), 16000); // 1 s
+  assert.deepStrictEqual(await readHeader(write('ok.wav', wav)), { dataStart: 44, dataBytes: 32000 });
+  const streamed = Buffer.from(wav);
+  streamed.writeUInt32LE(0xffffffff, 40); // size unknown when the file was written
+  assert.deepStrictEqual(await readHeader(write('streamed.wav', streamed)), { dataStart: 44, dataBytes: 32000 });
+  const other = Buffer.from(wav);
+  other.writeUInt32LE(44100, 24);
+  await assert.rejects(readHeader(write('rate.wav', other)), /16 kHz mono 16-bit/);
+  await assert.rejects(readHeader(write('text.wav', Buffer.from('hello world, not audio'))), /Not a WAV file/);
+  await assert.rejects(readHeader(write('empty.wav', wav.subarray(0, 44))), /empty/);
+  assert.strictEqual(titleFromName('C:\\Rec\\Porada 1. 10..m4a'), 'Porada 1. 10.');
+  assert.strictEqual(titleFromName('meeting'), 'meeting');
+  assert.strictEqual(titleFromName('.hidden'), '.hidden');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('transcription session never throws errors after it is closed', async () => {

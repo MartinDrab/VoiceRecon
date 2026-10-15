@@ -106,22 +106,13 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       send({ type: 'transcript', id: t.id });
     };
 
-    const speakerOf = (sp) => {
-      if (sp.kind === 'voice') {
-        const v = voices.summary().find((x) => x.id === sp.id);
-        return { voiceId: sp.id, key: `v:${sp.id}`, label: v ? v.name : 'Voice' };
-      }
-      if (sp.kind === 'unknown' && sp.id) return { voiceId: null, key: `u:${live.sessionNo}:${sp.id}`, label: sp.label };
-      return { voiceId: null, key: '?', label: '?' };
-    };
-
     const saveFinal = (m) => {
       const recent = session.recent.get(m.id) || {};
       const line = {
         start: m.start + live.offset,
         end: m.end + live.offset,
         spokenAt: Date.now() - Math.max(0, session.audioSeconds - m.start) * 1000,
-        speaker: speakerOf(m.speaker),
+        speaker: transcripts.speakerFields(m.speaker, live.sessionNo),
         text: m.text,
         seconds: recent.seconds,
         embedding: recent.embedding,

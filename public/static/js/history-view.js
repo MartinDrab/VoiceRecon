@@ -1,6 +1,6 @@
 import {
-  api, h, icon, toast, initPage, formatDuration, formatDateTime, formatClock, transcriptTitle, highlight, speakerColor,
-  t, plural, locale, speakerLabel,
+  api, h, icon, toast, initPage, formatDuration, formatDateTime, formatClock, transcriptTitle, statusBadge, highlight,
+  speakerColor, t, plural, locale, speakerLabel,
 } from './common.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
@@ -16,13 +16,18 @@ let voices = [];
 let editing = null; // id of the line whose text is being edited
 let picking = null; // { lineIds, key, name } for the speaker dialog
 let pollTimer = null;
+let stopping = false; // the user stopped the transcription of the file
 
 const isLive = () => Boolean(transcript && transcript.recording);
+const isProcessing = () => Boolean(transcript && transcript.processing && transcript.processing.state !== 'failed');
+const mayDelete = () => me.role === 'admin' || me.id === transcript.userId;
 
 async function load({ onlyIfChanged = false } = {}) {
   const [tr, v] = await Promise.all([api(`/transcripts/${tid}`), api('/voices')]);
   const changed = !transcript || tr.transcript.updatedAt !== transcript.updatedAt
-    || tr.transcript.recording !== transcript.recording || JSON.stringify(v.voices) !== JSON.stringify(voices);
+    || tr.transcript.recording !== transcript.recording || JSON.stringify(v.voices) !== JSON.stringify(voices)
+    || JSON.stringify(tr.transcript.processing) !== JSON.stringify(transcript.processing);
+  const wasProcessing = isProcessing();
   transcript = tr.transcript;
   lines = tr.lines;
   voices = v.voices;
@@ -38,9 +43,10 @@ async function load({ onlyIfChanged = false } = {}) {
     }
     focusLine = null;
   }
+  if (wasProcessing && !transcript.processing && !stopping) toast(t('The recording is transcribed.'));
   clearTimeout(pollTimer);
-  // While the transcript is still being recorded, keep it up to date.
-  if (isLive()) pollTimer = setTimeout(poll, 5000);
+  // While the transcript is still being recorded or transcribed, keep it up to date.
+  if (isLive()) pollTimer = setTimeout(poll, isProcessing() ? 2000 : 5000);
 }
 
 function poll() {
@@ -60,10 +66,11 @@ function renderHeader() {
   $('title').placeholder = transcriptTitle({ ...transcript, title: '' });
   const meta = [formatDateTime(transcript.startedAt), formatDuration(transcript.duration), plural(transcript.lines, '{n} line', '{n} lines')];
   if (transcript.user) meta.push(t('by {user}', { user: transcript.user }));
-  $('meta').replaceChildren(...[meta.join(' · '), isLive() ? h('span.live-badge', {}, t('still recording')) : null].filter(Boolean));
+  $('meta').replaceChildren(...[meta.join(' · '), statusBadge(transcript)].filter(Boolean));
   $('speakers').replaceChildren(...transcript.speakers.map((s) => h('span.chip', { style: { '--c': speakerColor(s) } }, `${speakerLabel(s.name)} · ${s.lines}`)));
   for (const f of ['txt', 'srt', 'json']) $(`export-${f}`).href = `/api/transcripts/${tid}/export?format=${f}`;
-  $('delete').classList.toggle('hidden', !(me.role === 'admin' || me.id === transcript.userId));
+  $('delete').classList.toggle('hidden', !mayDelete());
+  $('stop').classList.toggle('hidden', !(isProcessing() && mayDelete()));
   if (query) $('back').href = `/history?q=${encodeURIComponent(query)}`;
 }
 
@@ -216,6 +223,18 @@ $('title').addEventListener('change', async (e) => {
   }
 });
 $('refresh').replaceChildren(icon('refresh'), t('Refresh'));
+$('stop').addEventListener('click', async () => {
+  if (!confirm(t('Stop transcribing this recording? The lines found so far stay.'))) return;
+  stopping = true;
+  try {
+    await api(`/transcripts/${tid}/stop`, { method: 'POST' });
+    await load();
+    toast(t('Transcribing stopped.'));
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
+  stopping = false;
+});
 $('refresh').addEventListener('click', () => load().catch((err) => toast(err.message, { error: true })));
 $('delete').addEventListener('click', async () => {
   const question = plural(transcript.lines, 'Delete “{title}” with its {n} line? This cannot be undone.',

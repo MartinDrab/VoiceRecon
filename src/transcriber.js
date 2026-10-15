@@ -49,16 +49,22 @@ const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
  */
 class TranscriptionSession extends EventEmitter {
   /**
-   * Options (used by scripts/evaluate.js to compare settings; the server uses the defaults):
+   * Options (the live transcript uses the defaults):
    *   interim              produce interim results (default true)
+   *   learn                let clear matches refine the voices (default true; see considerLearning)
+   *   background           recognize at low priority, behind live sessions (uploaded files)
    *   vad                  overrides for SpeechEngine.createVad(), e.g. { minSilence: 0.3 }
    *   changeMaxSimilarity  split an utterance when its halves are less similar than this
    */
-  constructor(engine, voices, { interim = true, vad = {}, changeMaxSimilarity = CHANGE_MAX_SIMILARITY } = {}) {
+  constructor(engine, voices, {
+    interim = true, learn = true, background = false, vad = {}, changeMaxSimilarity = CHANGE_MAX_SIMILARITY,
+  } = {}) {
     super();
     this.engine = engine;
     this.voices = voices;
     this.interim = interim;
+    this.learn = learn;
+    this.background = background;
     this.changeMaxSimilarity = changeMaxSimilarity;
     this.vad = engine.createVad(vad);
     this.leftover = new Float32Array(0);
@@ -182,7 +188,7 @@ class TranscriptionSession extends EventEmitter {
    * @param gen       the utterance number (to retire its interim text once the final is out)
    */
   enqueueFinal(audio, from, core, coreStart, gen) {
-    const asr = this.engine.transcribe(audio, { owner: this }); // queued now so finals keep their order
+    const asr = this.engine.transcribe(audio, { owner: this, background: this.background }); // queued now so finals keep their order
     asr.catch(() => {}); // a rejection is handled when the chain awaits it, not before
     this.chain = this.chain
       .then(async () => {
@@ -320,7 +326,7 @@ class TranscriptionSession extends EventEmitter {
       const m = this.voices.identify(embedding);
       if (m.voiceId !== null) {
         speaker = { kind: 'voice', id: m.voiceId, score: round(m.score) };
-        this.voices.considerLearning(m.voiceId, embedding, samples.length / SAMPLE_RATE);
+        if (this.learn) this.voices.considerLearning(m.voiceId, embedding, samples.length / SAMPLE_RATE);
       } else {
         let u = this.bestUnknown(embedding);
         if (u) {
@@ -382,6 +388,11 @@ class TranscriptionSession extends EventEmitter {
     const to = { kind: 'voice', id: voiceId, score: 1 };
     if (this.lastSpeaker && this.lastSpeaker.id === unknownId) this.lastSpeaker = to;
     this.emit('message', { type: 'relabel', from: unknownRef(u), to });
+  }
+
+  /** Resolves once every utterance cut so far has its final result (paces uploaded files). */
+  settled() {
+    return this.chain;
   }
 
   /** Flushes buffered speech (e.g. when the microphone stops) and waits for all final results. */

@@ -133,31 +133,34 @@ export class MicRecorder {
   }
 }
 
-/** Decodes any audio file the browser understands into a 16 kHz mono WAV Blob. */
-export async function fileToWav(file) {
-  const data = await file.arrayBuffer();
-  const tmp = new AudioContext();
+/**
+ * Decodes any audio (or video) file the browser can play into 16 kHz mono 16-bit samples. The
+ * browser resamples while decoding, which keeps long files manageable: an hour of stereo takes
+ * about 460 MB while decoding instead of 1.4 GB at 48 kHz.
+ * @param {File} file
+ * @returns {Promise<Int16Array>}
+ */
+export async function decodeFile(file) {
   let decoded;
   try {
-    decoded = await tmp.decodeAudioData(data);
+    decoded = await new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(await file.arrayBuffer());
   } catch {
     throw new Error(t('"{name}" is not an audio format this browser can read.', { name: file.name }));
-  } finally {
-    tmp.close();
   }
-  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * SAMPLE_RATE)), SAMPLE_RATE);
-  const src = off.createBufferSource();
-  src.buffer = decoded;
-  src.connect(off.destination);
-  src.start();
-  const rendered = await off.startRendering();
-  const f = rendered.getChannelData(0);
-  const pcm = new Int16Array(f.length);
-  for (let i = 0; i < f.length; i++) {
-    const s = Math.max(-1, Math.min(1, f[i]));
+  const channels = Array.from({ length: decoded.numberOfChannels }, (_, c) => decoded.getChannelData(c));
+  const pcm = new Int16Array(decoded.length);
+  for (let i = 0; i < pcm.length; i++) {
+    let sum = 0;
+    for (const ch of channels) sum += ch[i];
+    const s = Math.max(-1, Math.min(1, sum / channels.length));
     pcm[i] = Math.round(s < 0 ? s * 32768 : s * 32767);
   }
-  return wavFromInt16(pcm, SAMPLE_RATE);
+  return pcm;
+}
+
+/** Decodes any audio file the browser understands into a 16 kHz mono WAV Blob. */
+export async function fileToWav(file) {
+  return wavFromInt16(await decodeFile(file), SAMPLE_RATE);
 }
 
 export function wavFromInt16(pcm, rate) {

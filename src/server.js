@@ -15,6 +15,7 @@ const { decodeWav } = require('./audio');
 const { SpeechEngine } = require('./speech/engine');
 const { VoiceManager } = require('./voices');
 const { TranscriptStore } = require('./transcripts');
+const { UploadQueue } = require('./uploads');
 const { attachWebSocket } = require('./ws');
 
 const PUBLIC = path.join(config.root, 'public');
@@ -25,6 +26,7 @@ const auth = new Auth(db, { sessionTtlHours: config.sessionTtlHours, secureCooki
 const engine = new SpeechEngine(config);
 const voices = new VoiceManager(db, engine, { dataDir: config.dataDir, defaultThreshold: config.speakerThreshold });
 const transcripts = new TranscriptStore(db, voices);
+const uploads = new UploadQueue({ dataDir: config.dataDir, engine, voices, transcripts });
 
 const app = express();
 app.disable('x-powered-by');
@@ -73,6 +75,11 @@ const id = (v) => {
   const n = Number(v);
   if (!Number.isInteger(n) || n <= 0) throw new HttpError(400, 'Invalid id.');
   return n;
+};
+/** The requested transcript if the user wrote it or is an administrator (who may delete it), else null. */
+const ownTranscript = (req) => {
+  const t = transcripts.get(id(req.params.id));
+  return t.user_id === req.user.id || req.user.role === 'admin' ? t : null;
 };
 const readWav = (req) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Send the recording as a WAV file (Content-Type: audio/wav).');
@@ -204,6 +211,21 @@ api.get('/transcripts', user, (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q : '';
   res.json(transcripts.list({ q, limit: Number(req.query.limit), offset: Number(req.query.offset) }));
 });
+// An uploaded recording becomes a transcript in the background. The browser converts any audio file
+// to 16 kHz mono 16-bit WAV; ?name= is the file name (the title), ?startedAt= when it was recorded (ms).
+api.post('/transcripts/upload', user, async (req, res) => {
+  if (!req.is(['audio/wav', 'audio/x-wav', 'audio/wave'])) {
+    throw new HttpError(400, 'Send the recording as a WAV file (Content-Type: audio/wav).');
+  }
+  const name = typeof req.query.name === 'string' ? req.query.name : '';
+  const transcriptId = await uploads.add(req, req.user, { name, startedAt: Number(req.query.startedAt) });
+  res.status(201).json({ id: transcriptId });
+});
+api.post('/transcripts/:id/stop', user, async (req, res) => {
+  const t = ownTranscript(req);
+  if (!t) throw new HttpError(403, 'Only the author or an administrator can stop this transcription.');
+  res.json({ stopped: await uploads.cancel(t.id) });
+});
 api.get('/transcripts/:id', user, (req, res) => {
   const tid = id(req.params.id);
   res.json({ transcript: transcripts.summary(tid), lines: transcripts.lines(tid) });
@@ -212,11 +234,10 @@ api.patch('/transcripts/:id', user, json, (req, res) => {
   transcripts.rename(id(req.params.id), req.body.title);
   res.json({ ok: true });
 });
-api.delete('/transcripts/:id', user, (req, res) => {
-  const t = transcripts.get(id(req.params.id));
-  if (t.user_id !== req.user.id && req.user.role !== 'admin') {
-    throw new HttpError(403, 'Only the author or an administrator can delete this transcript.');
-  }
+api.delete('/transcripts/:id', user, async (req, res) => {
+  const t = ownTranscript(req);
+  if (!t) throw new HttpError(403, 'Only the author or an administrator can delete this transcript.');
+  await uploads.cancel(t.id);
   transcripts.remove(t.id);
   res.json({ ok: true });
 });

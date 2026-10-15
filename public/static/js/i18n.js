@@ -47,6 +47,11 @@ export function formatNumber(n, digits) {
   return new Intl.NumberFormat(locale, options).format(n);
 }
 
+/** 0.45 -> "45%" (English) or "45 %" (Czech). */
+export function formatPercent(fraction) {
+  return new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 }).format(fraction);
+}
+
 /** Unknown speakers are stored as "Speaker 2"; this shows them in the page's language. */
 export function speakerLabel(label) {
   const m = /^Speaker (\d+)$/.exec(label || '');

@@ -56,6 +56,7 @@ class TranscriptStore {
     this.db = db;
     this.voices = voices;
     this.recording = new Map(); // transcript id -> number of live sessions writing to it
+    this.processing = new Map(); // transcript id -> status of its uploaded file (see uploads.js)
   }
 
   /** Live sessions report which transcript they write to, so pages can show "still recording". */
@@ -66,11 +67,32 @@ class TranscriptStore {
     else this.recording.delete(id);
   }
 
-  create(userId) {
-    const now = Date.now();
-    const { lastInsertRowid } = this.db.prepare('INSERT INTO transcripts (user_id, started_at, updated_at) VALUES (?, ?, ?)')
-      .run(userId, now, now);
+  /**
+   * @param {number} userId
+   * @param {{ title?: string, startedAt?: number }} [options]
+   */
+  create(userId, { title = '', startedAt = Date.now() } = {}) {
+    const { lastInsertRowid } = this.db.prepare('INSERT INTO transcripts (user_id, title, started_at, updated_at) VALUES (?, ?, ?, ?)')
+      .run(userId, String(title).trim().slice(0, MAX_TITLE), startedAt, Date.now());
     return this.get(Number(lastInsertRowid));
+  }
+
+  /** The length of the recording, when it is longer than its last line (uploaded files). */
+  extendDuration(transcriptId, seconds) {
+    this.db.prepare('UPDATE transcripts SET duration = MAX(duration, ?) WHERE id = ?').run(seconds, transcriptId);
+  }
+
+  /**
+   * Speaker fields of a line from a transcription session's speaker. Unknown speakers are only
+   * unique within one session, so their key includes the session number.
+   */
+  speakerFields(sp, sessionNo) {
+    if (sp.kind === 'voice') {
+      const v = this.voices.summary().find((x) => x.id === sp.id);
+      return { voiceId: sp.id, key: `v:${sp.id}`, label: v ? v.name : 'Voice' };
+    }
+    if (sp.kind === 'unknown' && sp.id) return { voiceId: null, key: `u:${sessionNo}:${sp.id}`, label: sp.label };
+    return { voiceId: null, key: '?', label: '?' };
   }
 
   get(id) {
@@ -226,6 +248,7 @@ class TranscriptStore {
       userId: t.user_id,
       user: users.get(t.user_id) || null,
       recording: this.recording.has(t.id),
+      processing: this.processing.get(t.id) || null,
     }));
   }
 

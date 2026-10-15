@@ -60,6 +60,13 @@ module.exports = {
     'Text musí mít 1–{max} znaků. Místo vymazání textu raději smažte celý řádek.',
   'Titles may be at most {max} characters long.': 'Název může mít nejvýše {max} znaků.',
   'Only the author or an administrator can delete this transcript.': 'Tento přepis může smazat jen jeho autor nebo správce.',
+  'Only the author or an administrator can stop this transcription.': 'Tento přepis může zastavit jen jeho autor nebo správce.',
+
+  // uploaded recordings
+  'Recordings may be at most {hours} hours long.': 'Nahrávka může být dlouhá nejvýše {hours} hodiny.',
+  'Send the recording as a 16 kHz mono 16-bit WAV file.': 'Pošlete nahrávku jako soubor WAV (16 kHz, mono, 16 bitů).',
+  'The recording is empty.': 'Nahrávka je prázdná.',
+  'The upload was interrupted.': 'Odesílání bylo přerušeno.',
   'Format must be txt, srt or json.': 'Formát musí být txt, srt nebo json.',
   'Transcript of {date}': 'Přepis z {date}',
   'Speaker {n}': 'Mluvčí {n}',

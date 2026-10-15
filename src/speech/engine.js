@@ -51,7 +51,7 @@ function meanEmbedding(items) {
  * Owns the neural models (Silero VAD, Parakeet ASR, CAM++ speaker embeddings) and shares them
  * between all transcription sessions. ASR runs off the main thread and is serialized through a
  * queue so concurrent sessions do not oversubscribe the CPU; final results take priority over
- * interim (partial) ones.
+ * interim (partial) ones, and both over background work (uploaded files).
  */
 class SpeechEngine {
   constructor(config) {
@@ -59,7 +59,7 @@ class SpeechEngine {
     this.ready = false;
     this.loadError = null;
     this.queue = [];
-    this.busy = false;
+    this.running = null; // the job being decoded
   }
 
   modelFiles() {
@@ -160,20 +160,20 @@ class SpeechEngine {
   }
 
   /**
-   * Speech-to-text. Final requests are queued in FIFO order ahead of any interim ones.
-   * `owner` tags the job so that cancel() can drop it while it is still queued.
+   * Speech-to-text. Jobs run in FIFO order within their priority: final results first, then
+   * interim ones, then background ones (uploaded files), so a long file never delays what people
+   * see live. `owner` tags the job so that cancel() can drop it while it is still queued.
+   * @param {Float32Array} samples
+   * @param {{ interim?: boolean, background?: boolean, owner?: any }} [options]
    * @returns {Promise<{text: string, lang: string, tokens: string[], timestamps: number[], durations: number[]}>}
    */
-  transcribe(samples, { interim = false, owner = null } = {}) {
+  transcribe(samples, { interim = false, background = false, owner = null } = {}) {
     return new Promise((resolve, reject) => {
-      const job = { samples, interim, owner, resolve, reject };
-      if (interim) {
-        this.queue.push(job);
-      } else {
-        const i = this.queue.findIndex((j) => j.interim);
-        if (i < 0) this.queue.push(job);
-        else this.queue.splice(i, 0, job);
-      }
+      const rank = background ? 2 : interim ? 1 : 0;
+      const job = { samples, rank, interim, owner, resolve, reject };
+      const i = this.queue.findIndex((j) => j.rank > rank);
+      if (i < 0) this.queue.push(job);
+      else this.queue.splice(i, 0, job);
       this.pump();
     });
   }
@@ -190,14 +190,15 @@ class SpeechEngine {
     });
   }
 
+  /** No live work is running or waiting (background work does not count: live work goes first). */
   get idle() {
-    return !this.busy && this.queue.length === 0;
+    return !(this.running && this.running.rank < 2) && !this.queue.some((j) => j.rank < 2);
   }
 
   async pump() {
-    if (this.busy || !this.queue.length) return;
+    if (this.running || !this.queue.length) return;
     const job = this.queue.shift();
-    this.busy = true;
+    this.running = job;
     try {
       const stream = this.recognizer.createStream();
       stream.acceptWaveform({ samples: job.samples, sampleRate: SAMPLE_RATE });
@@ -212,7 +213,7 @@ class SpeechEngine {
     } catch (err) {
       job.reject(err);
     } finally {
-      this.busy = false;
+      this.running = null;
       this.pump();
     }
   }

@@ -36,6 +36,7 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 1 
 - **Corrections**: if a line is credited to the wrong person, click the name and pick who really said it. That voice remembers how the line sounded and is recognized better from then on. Lines can be corrected while the session is still connected (not after a page reload).
 - **Speaker changes without a pause**: when someone answers without a gap, the utterance is split where the voice changes, and the text is cut between words.
 - **Voices page** (`/voices`): create voices, rename them, change colors, add recordings (record in the browser or upload any audio file the browser can play: WAV, MP3, M4A, OGG, …), play back or delete recordings. *Test recognition* shows how closely a clip matches each voice. Administrators can tune the *match threshold* and turn on *Learn from live speech*. Each voice card shows what it has learned from corrections and live speech, with *Forget* to undo it (the recordings stay).
+- **Transcribing recordings**: *Transcribe a file* on the History page takes any audio or video file the browser can play (MP3, M4A/AAC, WAV, OGG/Opus, FLAC, WebM, MP4, …) up to 4 hours long. The browser converts it to 16 kHz mono WAV and uploads it; the server transcribes it in the background with the same speaker recognition as live listening, and the new transcript opens and fills in as it goes (on the 4-CPU development machine in about 8 % of the recording's length: an hour takes about 5 minutes). You can close the page meanwhile, or stop it and keep what is done. The title is the file name, and the times count from when the recording started (the file's modification time minus its length). Live listening keeps priority, and recordings do not change how voices are recognized. Without a browser, `POST /api/transcripts/upload?name=…` accepts a 16 kHz mono 16-bit WAV file (signed-in session cookie needed).
 - **History** (`/history`): every saved transcript, newest first, with its speakers and first line. The search box finds transcripts containing all the words you type, anywhere in the transcript; case and Czech diacritics are ignored ("dovolene" finds "dovolené") and words match as prefixes. Matching lines are shown with the words highlighted; a click opens the transcript at that line.
 - **Saved transcript** (`/history/<id>`):
   - Rename it.
@@ -125,6 +126,8 @@ path is longer than 260 characters.
 3. While someone talks, the unfinished utterance is re-transcribed about every 0.8 s whenever the CPU is free. These interim results are shown greyed out.
 4. A finished utterance is transcribed with a little padding around it. Sliding 1.5 s voice prints check whether the speaker changes inside it. Each part is matched against the saved voices. If no voice reaches the threshold, the part goes to the closest unknown speaker of this session, or starts a new one.
 5. Final lines replace the interim text in the browser. Changes made on the Voices page (names, colors) show up in open transcripts immediately.
+
+An uploaded recording goes through the same steps, without interim results and at a lower priority than live listening.
 
 ### How voices are matched
 
@@ -259,3 +262,4 @@ test/         unit and end-to-end tests; test/fixtures (generated) is also an ev
 - Accuracy depends on the microphone. A single microphone in the middle of the table works, but a distant laptop microphone in an echoing room makes both transcription and voice matching worse.
 - Lines can be corrected on the transcript page only while the live session is connected; afterwards use History, which works for any saved line. Corrections teach voices only for lines recorded with the current speaker model.
 - A transcript continues after a page reload or a lost connection, but a second browser tab starts its own transcript.
+- Uploaded files are converted in the browser, which holds the whole decoded file in memory (about 460 MB for an hour of stereo), so very long recordings need a computer with enough RAM. If the server restarts while a file is being transcribed, the lines done so far stay, and the rest has to be uploaded again.

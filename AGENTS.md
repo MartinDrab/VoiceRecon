@@ -46,6 +46,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 |---|---|
 | `src/server.js` | Express app: security headers, pages, REST API, startup (models load in the background) |
 | `src/ws.js` | WebSocket `/ws/transcribe`: one `TranscriptionSession` per connection, voice-list broadcast |
+| `src/uploads.js` | Uploaded recordings: streamed to `DATA_DIR/uploads`, transcribed one at a time in the background into a new transcript |
 | `src/transcriber.js` | **Voice Transcriber**: VAD segmentation, interim/final results, speaker-change splitting, unknown-speaker clustering |
 | `src/voices.js` | **Voice Manager**: voices, recordings, voice prints (average, per recording, learned), `identify()`, learning from live speech and corrections |
 | `src/speech/engine.js` | Loads the models; ASR job queue; `embed`, `embedLong`, `speechOnly`, `resample` |
@@ -68,12 +69,15 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 5. The serialized `this.chain` then splits the utterance where the voice changes (`speakerTurns`), assigns each part to a voice or unknown speaker (`assignSpeaker`), and emits `final` messages followed by the interim-clear message.
 6. `VoiceManager` emits `changed` on any edit; `ws.js` then broadcasts the voice list, so open transcripts recolor and rename immediately.
 
+Uploaded files take the same path from step 2 on. The History page decodes the file in the browser (`decodeFile()` in `audio.js`, any format the browser plays) and uploads it as 16 kHz mono 16-bit WAV (`POST /api/transcripts/upload`, streamed to disk). `UploadQueue` creates the transcript at once and feeds the file to a `TranscriptionSession` with `{ interim: false, learn: false, background: true }`, a few seconds at a time, waiting for `session.settled()` in between. Progress is in `TranscriptStore.processing` (in memory, like `recording`).
+
 ## Invariants: don't break these
 
 **Audio and speech**
 - The whole server pipeline is 16 kHz mono float32 (`SAMPLE_RATE`). Resample at the edges (`engine.resample`, which uses the windowed-sinc `audio.resample`, and the worklet), never in the middle. Plain linear resampling aliases and measurably hurts recognition.
-- `TranscriptionSession` takes options (`interim`, `vad`, `changeMaxSimilarity`) for the evaluation script; the server uses the defaults. A new tunable belongs in these options with the current value as default, so it can be swept with `npm run evaluate`.
-- All ASR goes through `SpeechEngine.transcribe()`. Never call the recognizer directly: the queue serializes CPU-heavy decoding, runs finals before interims, and tags jobs with an `owner` so `cancel()` can drop work for closed sessions and finished utterances.
+- `TranscriptionSession` takes options (`interim`, `learn`, `background`, `vad`, `changeMaxSimilarity`); live sessions use the defaults, uploaded files and the evaluation script set some. A new tunable belongs in these options with the current value as default, so it can be swept with `npm run evaluate`.
+- All ASR goes through `SpeechEngine.transcribe()`. Never call the recognizer directly: the queue serializes CPU-heavy decoding, runs finals before interims before background jobs (uploaded files), and tags jobs with an `owner` so `cancel()` can drop work for closed sessions and finished utterances. `engine.idle` ignores background jobs, so live interim results keep coming while a file is transcribed.
+- An uploaded file must never get ahead of live work: `UploadQueue` feeds it in 1 s pieces with an event-loop turn between them and waits for the session to settle after every 5 s. Keep it that way, and keep one file at a time.
 - Final ASR input must end with `TAIL_SILENCE` (0.3 s of zeros). Without it Parakeet sometimes drops the last words or a whole trailing sentence. This was verified on real failures.
 - `PAD_BEFORE` exists because the VAD reports speech onsets late; short utterances otherwise lose their first words. `PAD_AFTER` is added only when the VAD is not detecting speech, i.e. after a real pause. `lastSegEnd` records the end of audio already given to the recognizer, so consecutive utterances never share audio.
 - The VAD's `maxSpeechDuration` is soft: it cuts at the next dip, so utterances can be longer than 15 s. `HISTORY` (40 s) must stay well above that.
@@ -89,7 +93,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 - `speaker_key` groups a speaker's lines: `v:<voice id>`, `u:<session no>:<unknown id>` (unknown ids restart in every live session, hence the session number), `n:<typed name>`, or `?`. Display names come from the voice when it still exists, otherwise from the stored `speaker_label`.
 - Lines keep their voice print (`embedding`, `model`), so moving lines to a voice in History teaches it (`TranscriptStore.learnFrom`: one averaged correction per change).
 - The FTS5 index is maintained by triggers on `transcript_lines` (insert, delete, text update); keep text changes going through SQL so the triggers fire. The index matches single lines, so `list()` intersects per-word results to find words spread over a transcript.
-- `TranscriptStore.recording` (in memory) says which transcripts have a live session attached; History pages poll only those.
+- `TranscriptStore.recording` (in memory) says which transcripts have a live session or an uploaded file attached; History pages poll only those. Uploaded files never teach voices (`learn: false`), and their temporary WAVs are deleted when done and on startup.
 
 **Never crash the process**
 - Code in the WebSocket `upgrade` and `message` listeners runs outside Express. An exception there is uncaught and stops the server. Keep the existing try/catch wrappers and validate every client message (it may be `null` or any JSON).

@@ -1,9 +1,9 @@
 // Shared helpers for all pages: API calls, DOM building, top navigation, toasts.
 // Importing i18n.js (also through this file) translates the page's static text.
 
-import { t, lang, locale, LANGUAGES, setLanguage } from './i18n.js';
+import { t, lang, locale, LANGUAGES, setLanguage, formatPercent } from './i18n.js';
 
-export { t, plural, lang, locale, formatNumber, speakerLabel } from './i18n.js';
+export { t, plural, lang, locale, formatNumber, formatPercent, speakerLabel } from './i18n.js';
 
 /**
  * Calls the server's API; JSON in and out, or a WAV recording as `raw`.
@@ -28,6 +28,43 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || t('Request failed ({status}).', { status: res.status }));
   return data;
+}
+
+/**
+ * Uploads a WAV recording like api() does, but with progress (fetch cannot report upload
+ * progress). `onProgress` gets 0..1; aborting `signal` cancels the upload.
+ * @param {string} path
+ * @param {Blob} blob
+ * @param {{ onProgress?: (fraction: number) => void, signal?: AbortSignal }} [options]
+ * @returns {Promise<any>}
+ */
+export function upload(path, blob, { onProgress, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api${path}`);
+    xhr.setRequestHeader('Content-Type', 'audio/wav');
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    });
+    xhr.addEventListener('load', () => {
+      let data = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch { /* not JSON */ }
+      if (xhr.status === 401) {
+        location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
+        reject(new Error(t('Please log in.')));
+      } else if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data);
+      } else {
+        reject(new Error(data.error || t('Request failed ({status}).', { status: xhr.status })));
+      }
+    });
+    xhr.addEventListener('error', () => reject(new Error(t('The upload failed. Check the connection and try again.'))));
+    xhr.addEventListener('abort', () => reject(new DOMException('Upload cancelled', 'AbortError')));
+    if (signal) signal.addEventListener('abort', () => xhr.abort());
+    xhr.send(blob);
+  });
 }
 
 /** Tiny element builder: h('div.card', { onclick }, child, ...). */
@@ -227,6 +264,15 @@ export function formatClock(seconds) {
 
 export function formatDateTime(ms) {
   return new Date(ms).toLocaleString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/** "still recording", "transcribing: 45%", … for a transcript that is still being filled; else null. */
+export function statusBadge(transcript) {
+  const p = transcript.processing;
+  if (p && p.state === 'failed') return h('span.live-badge', {}, t('transcription failed'));
+  if (p && p.state === 'queued') return h('span.live-badge.busy', {}, t('waiting to be transcribed'));
+  if (p) return h('span.live-badge.busy', {}, t('transcribing: {percent}', { percent: formatPercent(p.total ? p.done / p.total : 0) }));
+  return transcript.recording ? h('span.live-badge', {}, t('still recording')) : null;
 }
 
 export function transcriptTitle(transcript) {

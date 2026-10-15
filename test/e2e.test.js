@@ -213,6 +213,45 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     await call('PUT', '/api/settings/learn', { enabled: true });
     assert.strictEqual((await call('GET', '/api/voices')).learnFromSpeech, true);
 
+    // an uploaded recording is transcribed in the background into a new transcript, like live audio
+    const recording = fs.readFileSync(path.join(FIXTURES, 'conversation.wav'));
+    const recordedAt = Date.now() - 24 * 3600 * 1000;
+    const learnedBefore = await learnedOf('jirka');
+    const uploadFile = (query) => call('POST', `/api/transcripts/upload?${new URLSearchParams(query)}`, recording, 'audio/wav');
+    const untilDone = async (tid) => {
+      for (let i = 0; ; i++) {
+        const t = await call('GET', `/api/transcripts/${tid}`);
+        if (!t.transcript.recording) return t;
+        assert.ok(t.transcript.processing, 'progress is reported while the file is transcribed');
+        if (i > 1200) throw new Error('the uploaded recording was not transcribed in time');
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    };
+    const fileId = (await uploadFile({ name: 'Porada.m4a', startedAt: String(recordedAt) })).id;
+    const file = await untilDone(fileId);
+    const fileGot = file.lines.map((l) => `${l.start.toFixed(1)} <${names[l.speaker.voiceId] || l.speaker.name}> ${l.text}`).join('\n');
+    assert.deepStrictEqual(file.lines.map((l) => names[l.speaker.voiceId]), expected.map((e) => e.voice), fileGot);
+    const fileRecall = expected.reduce((n, e, i) => n + wordRecall(e.text, file.lines[i].text), 0) / expected.length;
+    assert.ok(fileRecall > 0.8, `word recall ${fileRecall.toFixed(2)}\n${fileGot}`);
+    assert.strictEqual(file.transcript.processing, null);
+    assert.strictEqual(file.transcript.title, 'Porada');
+    assert.strictEqual(file.transcript.startedAt, recordedAt);
+    assert.ok(Math.abs(file.transcript.duration - (recording.length - 44) / 32000) < 0.01, 'duration is the length of the recording');
+    assert.ok(Math.abs(file.lines[1].spokenAt - (recordedAt + file.lines[1].start * 1000)) < 2, 'line times follow the recording');
+    assert.deepStrictEqual(await learnedOf('jirka'), learnedBefore, 'uploaded recordings do not teach the voices');
+    assert.deepStrictEqual(fs.readdirSync(path.join(dataDir, 'uploads')), [], 'the uploaded file is removed');
+
+    // stopping keeps what was transcribed so far; other WAV formats are refused without a transcript
+    const stopId = (await uploadFile({ name: 'stop.wav' })).id;
+    assert.deepStrictEqual(await call('POST', `/api/transcripts/${stopId}/stop`), { stopped: true });
+    assert.ok((await untilDone(stopId)).lines.length < expected.length);
+    await call('DELETE', `/api/transcripts/${stopId}`);
+    const count = (await call('GET', '/api/transcripts')).total;
+    const wrongRate = Buffer.from(recording);
+    wrongRate.writeUInt32LE(44100, 24);
+    await assert.rejects(call('POST', '/api/transcripts/upload', wrongRate, 'audio/wav'), /400 Send the recording as a 16 kHz/);
+    assert.strictEqual((await call('GET', '/api/transcripts')).total, count);
+
     const got = finals.map((f) => `${f.start.toFixed(1)}-${f.end.toFixed(1)} <${names[f.speaker.id] || f.speaker.label}> ${f.text}`);
     assert.strictEqual(finals.length, expected.length, `turns:\n${got.join('\n')}`);
     for (let i = 0; i < expected.length; i++) {

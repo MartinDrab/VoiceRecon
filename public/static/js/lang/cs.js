@@ -121,7 +121,8 @@ export default {
   'Corrected. The line was too short to learn from.': 'Opraveno. Řádek byl příliš krátký, aby se z něj hlas mohl učit.',
 
   // history
-  'Transcripts are saved automatically while you listen.': 'Přepisy se během poslouchání ukládají automaticky.',
+  'Transcripts are saved automatically while you listen. Recordings can be transcribed too.':
+    'Přepisy se během poslouchání ukládají automaticky. Přepsat jde i nahrávku.',
   'Search all transcripts': 'Hledat ve všech přepisech',
   'Show more': 'Zobrazit další',
   'No lines yet.': 'Zatím žádné řádky.',
@@ -132,6 +133,22 @@ export default {
   '{n} line|{n} lines': { one: '{n} řádek', few: '{n} řádky', other: '{n} řádků' },
   '{n} matching line|{n} matching lines': { one: '{n} odpovídající řádek', few: '{n} odpovídající řádky', other: '{n} odpovídajících řádků' },
   '{n} transcript found.|{n} transcripts found.': { one: 'Nalezen {n} přepis.', few: 'Nalezeny {n} přepisy.', other: 'Nalezeno {n} přepisů.' },
+
+  // transcribing a file
+  'Transcribe a file': 'Přepsat soubor',
+  'Any audio or video file the browser can play: MP3, M4A, WAV, OGG, FLAC, WebM, …':
+    'Jakýkoli zvukový nebo video soubor, který prohlížeč umí přehrát: MP3, M4A, WAV, OGG, FLAC, WebM, …',
+  'Reading “{name}”…': 'Načítání souboru „{name}“…',
+  'Uploading “{name}”… {percent}': 'Odesílání souboru „{name}“… {percent}',
+  'Recordings may be at most {hours} hours long.': 'Nahrávka může být dlouhá nejvýše {hours} hodiny.',
+  'The upload failed. Check the connection and try again.': 'Odeslání se nezdařilo. Zkontrolujte připojení a zkuste to znovu.',
+  'waiting to be transcribed': 'čeká na přepis',
+  'transcribing: {percent}': 'přepisuje se: {percent}',
+  'transcription failed': 'přepis selhal',
+  'Stop transcribing': 'Zastavit přepis',
+  'Stop transcribing this recording? The lines found so far stay.': 'Zastavit přepis této nahrávky? Dosud přepsané řádky zůstanou.',
+  'The recording is transcribed.': 'Nahrávka je přepsaná.',
+  'Transcribing stopped.': 'Přepis byl zastaven.',
 
   // one saved transcript
   '← All transcripts': '← Všechny přepisy',
