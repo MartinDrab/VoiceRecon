@@ -142,7 +142,7 @@ path is longer than 260 characters.
 1. The browser streams 16 kHz mono audio over a WebSocket (`/ws/transcribe`) in 100 ms frames.
 2. Silero VAD finds speech. An utterance ends after 0.35 s of silence; after 15 s of continuous speech it is cut at the next short dip.
 3. While someone talks, the unfinished utterance is re-transcribed about every 0.8 s whenever the CPU is free. These interim results are shown greyed out.
-4. A finished utterance is transcribed with a little padding around it. Sliding 1.5 s voice prints check whether the speaker changes inside it. Each part is matched against the saved voices. If no voice reaches the threshold, the part goes to the closest unknown speaker of this session, or starts a new one.
+4. A finished utterance is transcribed with a little padding around it. One shorter than 2.5 s is transcribed after the last 4 s of speech that came before it, and only its own words are kept: alone, the recognizer often took a short Czech phrase for English ("Ukrajincům" came out as "Uh Ukraine Soom"). Sliding 1.5 s voice prints check whether the speaker changes inside it. Each part is matched against the saved voices. If no voice reaches the threshold, the part goes to the closest unknown speaker of this session, or starts a new one.
 5. Final lines replace the interim text in the browser. Changes made on the Voices page (names, colors) show up in open transcripts immediately.
 
 An uploaded recording goes through the same steps, without interim results and at a lower priority than live listening.

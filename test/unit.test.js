@@ -10,7 +10,7 @@ const { decodeWav, encodeWav, int16ToFloat } = require('../src/audio');
 const { openDatabase, getSetting, setSetting } = require('../src/db');
 const { Auth, hashPassword, verifyPassword, parseCookies } = require('../src/auth');
 const { VoiceManager } = require('../src/voices');
-const { TranscriptionSession, splitWords } = require('../src/transcriber');
+const { TranscriptionSession, splitWords, dropLead } = require('../src/transcriber');
 const { SpeechEngine, l2normalize } = require('../src/speech/engine');
 const { readHeader, titleFromName } = require('../src/uploads');
 
@@ -347,6 +347,46 @@ test('voices match their best recording, and learn only from clear matches', () 
   vm.forgetLearned();
   assert.deepStrictEqual(vm.list().find((x) => x.id === ben).learned, { live: 0, correction: 0 });
   db.close();
+});
+
+test('short utterances are recognized after the speech before them, keeping only their own words', async () => {
+  const calls = [];
+  // The recognizer "hears" 4 s of context, 0.5 s of silence, then the utterance (from 4.5 s).
+  const heard = {
+    text: ' Co se stalo minule. Ukrajincům.',
+    tokens: [' Co', ' se', ' sta', 'lo', ' minule', '.', ' Ukra', 'jin', 'cům', '.'],
+    timestamps: [0.2, 0.6, 1.0, 1.3, 2.0, 4.3, 4.6, 4.9, 5.1, 5.4],
+    durations: [0.1, 0.1, 0.1, 0.1, 0.4, 0.1, 0.1, 0.1, 0.1, 0.1],
+    lang: '',
+  };
+  const engine = {
+    createVad: () => ({}),
+    cancel() {},
+    transcribe: async (samples) => {
+      calls.push(samples.length);
+      return calls.length === 1 ? heard : { text: 'Alone.', tokens: [], timestamps: [], durations: [], lang: '' };
+    },
+  };
+  const session = new TranscriptionSession(engine, {});
+  const context = new Float32Array(4 * 16000);
+  const audio = new Float32Array(1.2 * 16000);
+  const r = await session.recognize(audio, context, {});
+  assert.deepStrictEqual(calls, [context.length + 0.5 * 16000 + audio.length]);
+  assert.strictEqual(r.text, 'Ukrajincům.', 'the late "." of the context and the context words are dropped');
+  assert.deepStrictEqual(r.timestamps.map((t) => Math.round(t * 10) / 10), [0.1, 0.4, 0.6, 0.9], 'times count from the utterance');
+  assert.strictEqual((await session.recognize(audio, null, {})).text, 'Alone.', 'no context: the utterance alone');
+  assert.strictEqual(calls[1], audio.length);
+
+  // Without token times the context cannot be cut off, so the utterance is recognized alone.
+  assert.strictEqual(dropLead({ ...heard, timestamps: [] }, 4.5, 0.25), null);
+  calls.length = 0;
+  engine.transcribe = async (samples) => {
+    calls.push(samples.length);
+    return calls.length === 1 ? { ...heard, timestamps: [] } : { ...heard, text: 'Alone again.' };
+  };
+  assert.strictEqual((await session.recognize(audio, context, {})).text, 'Alone again.');
+  assert.deepStrictEqual(calls, [context.length + 0.5 * 16000 + audio.length, audio.length]);
+  assert.strictEqual(dropLead({ ...heard, tokens: [], timestamps: [] }, 4.5, 0.25).text, '', 'silence stays silence');
 });
 
 test('splitWords cuts between words, preferring sentence ends', () => {

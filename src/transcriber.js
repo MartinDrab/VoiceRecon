@@ -15,6 +15,11 @@ const PAD_AFTER = sec(0.3); // only after a real pause: the VAD waits for >= 0.3
 const TAIL_SILENCE = sec(0.3); // without it the recognizer sometimes drops the last words
 const PARTIAL_EVERY = sec(0.8);
 const MIN_PARTIAL = sec(1.2); // shorter snippets mostly produce guesses in the wrong language
+// Alone, a short utterance is often taken for another language ("Ukrajincům" came out as
+// "Uh Ukraine Soom"), so it is recognized after the speech that preceded it (see recognize()).
+const SHORT_UTTERANCE = sec(2.5);
+const CONTEXT = sec(4); // speech kept as context: the end of the previous utterances
+const CONTEXT_GAP = sec(0.5); // silence between the context and the utterance, so no word spans both
 const NEW_SPEAKER_MIN = sec(1.5);
 const UNKNOWN_AUDIO_LIMIT = sec(60);
 const MAX_RECENT = 2000; // final lines whose voice print is kept so the user can correct them
@@ -84,6 +89,7 @@ class TranscriptionSession extends EventEmitter {
     this.unknown = []; // { id, label, centroid, count, audio: Float32Array[], audioLen }
     this.unknownSeq = 0;
     this.lastSpeaker = null;
+    this.context = new Float32Array(0); // the last CONTEXT samples of speech, for short utterances
     this.recent = new Map(); // final id -> { embedding, seconds }, for corrections
     this.closed = false;
   }
@@ -156,7 +162,10 @@ class TranscriptionSession extends EventEmitter {
     this.lastSegEnd = Math.max(to, coreEnd);
     this.speechStart = null;
     this.engine.cancel(this, { interimOnly: true }); // interim results of this utterance are moot
-    this.enqueueFinal(audio, from, core, coreStart, this.gen);
+    const context = core.length < SHORT_UTTERANCE ? this.context : null;
+    const recent = concat([this.context, core]);
+    this.context = recent.slice(Math.max(0, recent.length - CONTEXT));
+    this.enqueueFinal(audio, from, core, coreStart, this.gen, context);
   }
 
   maybePartial() {
@@ -167,7 +176,7 @@ class TranscriptionSession extends EventEmitter {
     const gen = this.gen;
     const audio = this.extract(this.speechStart, this.fed);
     this.partialBusy = true;
-    this.engine.transcribe(withTail(audio), { interim: true, owner: this })
+    this.recognize(withTail(audio), audio.length < SHORT_UTTERANCE ? this.context : null, { interim: true, owner: this })
       .then((r) => {
         if (this.closed || this.speechStart === null || this.gen !== gen || !r.text) return;
         const speaker = audio.length >= NEW_SPEAKER_MIN ? this.peekSpeaker(this.engine.embed(audio)) : { kind: 'none' };
@@ -186,9 +195,11 @@ class TranscriptionSession extends EventEmitter {
    * @param core      the utterance as cut by the VAD, used for speaker recognition
    * @param coreStart absolute position of core[0]
    * @param gen       the utterance number (to retire its interim text once the final is out)
+   * @param context   speech said before a short utterance (see recognize()), or null
    */
-  enqueueFinal(audio, from, core, coreStart, gen) {
-    const asr = this.engine.transcribe(audio, { owner: this, background: this.background }); // queued now so finals keep their order
+  enqueueFinal(audio, from, core, coreStart, gen, context = null) {
+    // Queued now so finals keep their order.
+    const asr = this.recognize(audio, context, { owner: this, background: this.background });
     asr.catch(() => {}); // a rejection is handled when the chain awaits it, not before
     this.chain = this.chain
       .then(async () => {
@@ -230,6 +241,27 @@ class TranscriptionSession extends EventEmitter {
         if (this.partialGen === gen) this.clearPartial();
       })
       .catch((err) => this.fail(err));
+  }
+
+  /**
+   * Speech-to-text of an utterance. With `context` (speech said before a short utterance), the
+   * recognizer hears the context, a short silence and then the utterance, and only the utterance's
+   * own words are kept; times in the result are relative to the utterance, as without context.
+   * @param {Float32Array} audio
+   * @param {Float32Array | null} context
+   * @param {{ interim?: boolean, background?: boolean, owner?: any }} options for SpeechEngine.transcribe()
+   */
+  recognize(audio, context, options) {
+    if (!context || !context.length) return this.engine.transcribe(audio, options);
+    const lead = context.length + CONTEXT_GAP;
+    const input = new Float32Array(lead + audio.length);
+    input.set(context);
+    input.set(audio, lead);
+    return this.engine.transcribe(input, options).then((r) => {
+      const own = dropLead(r, lead / SAMPLE_RATE, CONTEXT_GAP / 2 / SAMPLE_RATE);
+      // Without word times the context cannot be cut off: recognize the utterance alone.
+      return own || this.engine.transcribe(audio, options);
+    });
   }
 
   clearPartial() {
@@ -424,6 +456,29 @@ class TranscriptionSession extends EventEmitter {
   }
 }
 
+/**
+ * The part of a recognition result that starts `lead` seconds into the input: words starting
+ * before lead - margin belong to the context. Token times are shifted to start at lead. Returns
+ * null when the result has no token times to cut by.
+ */
+function dropLead(result, lead, margin) {
+  const { tokens, timestamps, durations } = result;
+  if (!tokens.length) return { ...result, text: '' };
+  if (tokens.length !== timestamps.length) return null;
+  let first = timestamps.findIndex((t) => t >= lead - margin);
+  if (first < 0) first = tokens.length;
+  // A punctuation mark recognized late still ends the context's last sentence.
+  while (first < tokens.length && !tokens[first].startsWith(' ') && !/[\p{L}\p{N}]/u.test(tokens[first])) first++;
+  const text = tokens.slice(first).join('').trim();
+  return {
+    ...result,
+    text: text && text[0].toUpperCase() + text.slice(1),
+    tokens: tokens.slice(first),
+    timestamps: timestamps.slice(first).map((t) => Math.max(0, t - lead)),
+    durations: (durations || []).slice(first),
+  };
+}
+
 function withTail(samples) {
   const out = new Float32Array(samples.length + TAIL_SILENCE);
   out.set(samples);
@@ -485,4 +540,4 @@ function splitWords(result, bounds) {
   });
 }
 
-module.exports = { TranscriptionSession, splitWords };
+module.exports = { TranscriptionSession, splitWords, dropLead };
