@@ -1,10 +1,12 @@
 'use strict';
 
+const { HttpError } = require('./errors');
+
 /** Minimal WAV (RIFF) reader/writer for PCM 8/16/24/32-bit and IEEE float 32/64-bit. */
 
 function decodeWav(buf) {
   if (buf.length < 12 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') {
-    throw new Error('Not a WAV file.');
+    throw new HttpError(400, 'Not a WAV file.');
   }
   let fmt = null;
   let data = null;
@@ -26,9 +28,9 @@ function decodeWav(buf) {
     }
     pos = start + size + (size & 1);
   }
-  if (!fmt || !data) throw new Error('WAV file is missing its fmt or data chunk.');
+  if (!fmt || !data) throw new HttpError(400, 'WAV file is missing its fmt or data chunk.');
   const { format, channels, sampleRate, bits } = fmt;
-  if (!channels || !sampleRate) throw new Error('Invalid WAV header.');
+  if (!channels || !sampleRate || !bits) throw new HttpError(400, 'Invalid WAV header.');
 
   const bytes = bits / 8;
   const frames = Math.floor(data.length / (bytes * channels));
@@ -52,7 +54,7 @@ function sampleReader(format, bits) {
     if (bits === 32) return (b, o) => b.readFloatLE(o);
     if (bits === 64) return (b, o) => b.readDoubleLE(o);
   }
-  throw new Error(`Unsupported WAV encoding (format ${format}, ${bits} bits).`);
+  throw new HttpError(400, 'Unsupported WAV encoding (format {format}, {bits} bits).', { format, bits });
 }
 
 /** Encodes mono float samples as 16-bit PCM WAV. */

@@ -18,7 +18,7 @@ module.exports = [
   },
   {
     // Loaded as a plain script before the stylesheet (see the file).
-    files: ['public/static/js/theme.js'],
+    files: ['public/static/js/boot.js'],
     languageOptions: { sourceType: 'script' },
   },
   {

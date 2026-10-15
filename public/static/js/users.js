@@ -1,30 +1,30 @@
-import { api, h, icon, toast, initPage } from './common.js';
+import { api, h, icon, toast, initPage, t, locale } from './common.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
 let me = null;
 let resetting = null;
 
-const created = (s) => new Date(`${s.replace(' ', 'T')}Z`).toLocaleDateString();
+const created = (s) => new Date(`${s.replace(' ', 'T')}Z`).toLocaleDateString(locale);
 
 async function loadUsers() {
   const { users } = await api('/users');
   $('user-rows').replaceChildren(...users.map((u) => {
     const self = u.id === me.id;
     const role = h('select', {
-      'aria-label': `Role of ${u.username}`,
+      'aria-label': t('Role of {username}', { username: u.username }),
       onchange: (e) => change(u, { role: e.target.value }),
-    }, h('option', { value: 'user', selected: u.role === 'user' }, 'User'),
-    h('option', { value: 'admin', selected: u.role === 'admin' }, 'Administrator'));
+    }, h('option', { value: 'user', selected: u.role === 'user' }, t('User')),
+    h('option', { value: 'admin', selected: u.role === 'admin' }, t('Administrator')));
     return h('tr', {},
-      h('td', {}, h('strong', {}, u.username), self ? h('span.muted', {}, ' (you)') : null),
+      h('td', {}, h('strong', {}, u.username), self ? h('span.muted', {}, ` ${t('(you)')}`) : null),
       h('td', {}, role),
       h('td.muted', {}, created(u.createdAt)),
       h('td.actions', {},
-        h('button.btn.btn-sm', { onclick: () => openReset(u) }, 'Set password'),
+        h('button.btn.btn-sm', { onclick: () => openReset(u) }, t('Set password')),
         ' ',
         h('button.btn.btn-sm.btn-ghost.btn-danger', {
-          title: self ? 'You cannot delete your own account' : `Delete ${u.username}`,
+          title: self ? t('You cannot delete your own account') : t('Delete {username}', { username: u.username }),
           disabled: self,
           onclick: () => remove(u),
         }, icon('trash'))));
@@ -34,7 +34,7 @@ async function loadUsers() {
 async function change(u, changes) {
   try {
     await api(`/users/${u.id}`, { method: 'PATCH', body: changes });
-    toast('Saved.');
+    toast(t('Saved.'));
   } catch (err) {
     toast(err.message, { error: true });
   }
@@ -42,10 +42,10 @@ async function change(u, changes) {
 }
 
 async function remove(u) {
-  if (!confirm(`Delete the user “${u.username}”?`)) return;
+  if (!confirm(t('Delete the user “{username}”?', { username: u.username }))) return;
   try {
     await api(`/users/${u.id}`, { method: 'DELETE' });
-    toast('User deleted.');
+    toast(t('User deleted.'));
   } catch (err) {
     toast(err.message, { error: true });
   }
@@ -54,7 +54,7 @@ async function remove(u) {
 
 function openReset(u) {
   resetting = u;
-  $('reset-title').textContent = `Set password for ${u.username}`;
+  $('reset-title').textContent = t('Set password for {username}', { username: u.username });
   $('reset-password').value = '';
   $('reset-error').textContent = '';
   $('reset-dialog').showModal();
@@ -66,7 +66,9 @@ $('reset-form').addEventListener('submit', async (e) => {
   try {
     await api(`/users/${resetting.id}`, { method: 'PATCH', body: { password: $('reset-password').value } });
     $('reset-dialog').close();
-    toast(resetting.id === me.id ? 'Password changed.' : `Password changed. ${resetting.username} was signed out everywhere.`);
+    toast(resetting.id === me.id
+      ? t('Password changed.')
+      : t('Password changed. {username} was signed out everywhere.', { username: resetting.username }));
   } catch (err) {
     $('reset-error').textContent = err.message;
   }
@@ -80,7 +82,7 @@ $('add-form').addEventListener('submit', async (e) => {
   try {
     await api('/users', { method: 'POST', body: data });
     form.reset();
-    toast(`User ${data.username} added.`);
+    toast(t('User {username} added.', { username: String(data.username) }));
     await loadUsers();
   } catch (err) {
     $('add-error').textContent = err.message;
@@ -93,13 +95,13 @@ $('password-form').addEventListener('submit', async (e) => {
   const data = Object.fromEntries(new FormData(form));
   $('password-error').textContent = '';
   if (data.newPassword !== data.confirm) {
-    $('password-error').textContent = 'The new passwords do not match.';
+    $('password-error').textContent = t('The new passwords do not match.');
     return;
   }
   try {
     await api('/me/password', { method: 'POST', body: { currentPassword: data.currentPassword, newPassword: data.newPassword } });
     form.reset();
-    toast('Password changed. Other sessions were signed out.');
+    toast(t('Password changed. Other sessions were signed out.'));
   } catch (err) {
     $('password-error').textContent = err.message;
   }
@@ -107,7 +109,9 @@ $('password-form').addEventListener('submit', async (e) => {
 
 initPage('users').then(async (user) => {
   me = user;
-  $('account-info').textContent = `Signed in as ${user.username} (${user.role === 'admin' ? 'administrator' : 'user'}).`;
+  $('account-info').textContent = user.role === 'admin'
+    ? t('Signed in as {username} (administrator).', { username: user.username })
+    : t('Signed in as {username} (user).', { username: user.username });
   if (user.role === 'admin') {
     $('admin-section').classList.remove('hidden');
     await loadUsers();

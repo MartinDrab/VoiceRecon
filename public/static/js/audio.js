@@ -1,5 +1,7 @@
 // Browser audio helpers: microphone capture as 16 kHz PCM, file decoding, WAV encoding.
 
+import { t } from './i18n.js';
+
 export const SAMPLE_RATE = 16000;
 
 const MIC_KEY = 'voicerecon.microphone';
@@ -57,8 +59,8 @@ export class MicCapture {
   async start() {
     if (!MicCapture.supported()) {
       throw new Error(window.isSecureContext
-        ? 'This browser cannot record audio.'
-        : 'The microphone is only available over HTTPS or on localhost.');
+        ? t('This browser cannot record audio.')
+        : t('The microphone is only available over HTTPS or on localhost.'));
     }
     const preferred = preferredMicrophone();
     try {
@@ -139,7 +141,7 @@ export async function fileToWav(file) {
   try {
     decoded = await tmp.decodeAudioData(data);
   } catch {
-    throw new Error(`"${file.name}" is not an audio format this browser can read.`);
+    throw new Error(t('"{name}" is not an audio format this browser can read.', { name: file.name }));
   } finally {
     tmp.close();
   }

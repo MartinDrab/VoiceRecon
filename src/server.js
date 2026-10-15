@@ -10,6 +10,7 @@ const config = require('./config');
 const { openDatabase } = require('./db');
 const { Auth, isLoopback, verifyPassword } = require('./auth');
 const { HttpError } = require('./errors');
+const { translate, languageOf } = require('./i18n');
 const { decodeWav } = require('./audio');
 const { SpeechEngine } = require('./speech/engine');
 const { VoiceManager } = require('./voices');
@@ -75,11 +76,7 @@ const id = (v) => {
 };
 const readWav = (req) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Send the recording as a WAV file (Content-Type: audio/wav).');
-  try {
-    return decodeWav(req.body);
-  } catch (err) {
-    throw new HttpError(400, err.message);
-  }
+  return decodeWav(req.body); // throws HttpError(400) for files it cannot read
 };
 
 api.get('/setup', (req, res) => {
@@ -246,7 +243,7 @@ api.delete('/transcripts/:id/lines/:lineId', user, (req, res) => {
   res.json({ ok: true });
 });
 api.get('/transcripts/:id/export', user, (req, res) => {
-  const out = transcripts.export(id(req.params.id), req.query.format);
+  const out = transcripts.export(id(req.params.id), req.query.format, languageOf(req));
   res.set('Content-Disposition', `attachment; filename="${out.filename}"`).type(out.type).send(out.body);
 });
 
@@ -258,7 +255,10 @@ app.use((req, res) => res.status(404).type('text').send('Not found'));
 app.use((err, req, res, _next) => {
   const status = err.status || err.statusCode || 500;
   if (status >= 500) console.error(err);
-  const message = status >= 500 && !(err instanceof HttpError) ? 'Internal server error.' : err.message;
+  const lang = languageOf(req);
+  const message = status >= 500 && !(err instanceof HttpError)
+    ? translate(lang, 'Internal server error.')
+    : translate(lang, err.template || err.message, err.params);
   if (req.path.startsWith('/api/')) res.status(status).json({ error: message });
   else res.status(status).type('text').send(message);
 });

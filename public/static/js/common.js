@@ -1,4 +1,9 @@
 // Shared helpers for all pages: API calls, DOM building, top navigation, toasts.
+// Importing i18n.js (also through this file) translates the page's static text.
+
+import { t, lang, locale, LANGUAGES, setLanguage } from './i18n.js';
+
+export { t, plural, lang, locale, formatNumber, speakerLabel } from './i18n.js';
 
 /**
  * Calls the server's API; JSON in and out, or a WAV recording as `raw`.
@@ -18,10 +23,10 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
   const res = await fetch(`/api${path}`, opts);
   if (res.status === 401 && !path.startsWith('/login') && !path.startsWith('/setup')) {
     location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
-    throw new Error('Please log in.');
+    throw new Error(t('Please log in.'));
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
+  if (!res.ok) throw new Error(data.error || t('Request failed ({status}).', { status: res.status }));
   return data;
 }
 
@@ -72,13 +77,12 @@ export function icon(name) {
   return span.firstChild;
 }
 
-// ---------- color theme (applied early by theme.js) ----------
+// ---------- color theme (applied early by boot.js) ----------
 
-const THEME_LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
 const THEME_ICONS = { system: 'system', light: 'sun', dark: 'moon' };
 
 export function themeLabel(mode = window.voiceReconTheme.get()) {
-  return THEME_LABELS[mode];
+  return { system: t('System'), light: t('Light'), dark: t('Dark') }[mode];
 }
 
 export function nextTheme() {
@@ -92,12 +96,34 @@ export function themeButton() {
     const mode = window.voiceReconTheme.get();
     const next = window.voiceReconTheme.modes[(window.voiceReconTheme.modes.indexOf(mode) + 1) % 3];
     btn.replaceChildren(icon(THEME_ICONS[mode]));
-    btn.title = `Theme: ${THEME_LABELS[mode]}. Click for ${THEME_LABELS[next]}.`;
+    btn.title = t('Theme: {current}. Click for {next}.', { current: themeLabel(mode), next: themeLabel(next) });
     btn.setAttribute('aria-label', btn.title);
   };
   btn.addEventListener('click', () => nextTheme());
   window.addEventListener('voicerecon-theme', render);
   render();
+  return btn;
+}
+
+// ---------- language (chosen early by boot.js) ----------
+
+/** The language the page is not in: the switch offers it, named in its own language. */
+export const otherLanguage = lang === 'cs' ? 'en' : 'cs';
+
+/** Switches the language; the page reloads in it. */
+export function switchLanguage() {
+  setLanguage(otherLanguage);
+}
+
+/** A button that switches to the other language ("CS" / "EN"). */
+export function languageButton() {
+  const btn = h('button.btn.btn-ghost.btn-icon.lang-btn', {
+    type: 'button',
+    lang: otherLanguage,
+    title: LANGUAGES[otherLanguage],
+    'aria-label': LANGUAGES[otherLanguage],
+    onclick: switchLanguage,
+  }, otherLanguage.toUpperCase());
   return btn;
 }
 
@@ -125,19 +151,20 @@ export async function logout() {
 export async function initPage(active) {
   const { user } = await api('/me');
   const links = [
-    ['transcript', 'Transcript'],
-    ['history', 'History'],
-    ['voices', 'Voices'],
-    ['users', user.role === 'admin' ? 'Users' : 'Account'],
+    ['transcript', t('Transcript')],
+    ['history', t('History')],
+    ['voices', t('Voices')],
+    ['users', user.role === 'admin' ? t('Users') : t('Account')],
   ];
   const bar = h('header.topbar',
     {},
     h('a.brand', { href: '/transcript' }, icon('logo'), h('span', {}, 'VoiceRecon')),
     h('nav.nav', {}, links.map(([key, label]) => h(`a${key === active ? '.active' : ''}`, { href: `/${key}` }, label))),
     h('div.account', {},
+      languageButton(),
       themeButton(),
       h('span.who-am-i', {}, user.username),
-      h('button.btn.btn-sm', { onclick: logout }, 'Log out')));
+      h('button.btn.btn-sm', { onclick: logout }, t('Log out'))));
   document.body.prepend(bar);
   return user;
 }
@@ -163,7 +190,7 @@ export function highlight(text, query) {
   const out = [];
   let last = 0;
   for (const m of folded.matchAll(/[\p{L}\p{N}]+/gu)) {
-    const term = terms.find((t) => m[0].startsWith(t));
+    const term = terms.find((w) => m[0].startsWith(w));
     if (!term) continue;
     if (m.index > last) out.push(text.slice(last, m.index));
     out.push(h('mark', {}, text.slice(m.index, m.index + term.length)));
@@ -199,11 +226,11 @@ export function formatClock(seconds) {
 }
 
 export function formatDateTime(ms) {
-  return new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(ms).toLocaleString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export function transcriptTitle(t) {
-  return t.title || `Transcript of ${formatDateTime(t.startedAt)}`;
+export function transcriptTitle(transcript) {
+  return transcript.title || t('Transcript of {date}', { date: formatDateTime(transcript.startedAt) });
 }
 
 export function formatDuration(seconds) {

@@ -47,6 +47,7 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 1 
   - Everyone signed in can read and edit transcripts; deleting one is for its author and administrators.
 - **Light and dark themes**: by default VoiceRecon follows the operating system. The sun/moon/monitor button in the top bar (and *Theme* in the transcript page's menu, or the button in the corner of the sign-in page) switches between *System*, *Light* and *Dark*; the choice is remembered in the browser. Speaker colors are adjusted for each theme so that text in any voice color stays readable.
 - **Users page** (`/users`): administrators add users, set passwords, change roles and delete users. Every user can change their own password there.
+- **Czech and English**: the pages, messages and exports follow the browser's language (Czech or Slovak gives Czech, anything else English). The **CS**/**EN** button in the top bar (*Čeština*/*English* in the transcript page's menu, or the button in the corner of the sign-in page) switches it; the choice is remembered by the browser. Saved data does not change: unknown speakers show as *Mluvčí 2* in Czech and *Speaker 2* in English.
 
 ## Requirements
 

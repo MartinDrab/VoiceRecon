@@ -1,6 +1,7 @@
 'use strict';
 
 const { HttpError } = require('./errors');
+const { translate } = require('./i18n');
 const { meanEmbedding, embeddingToBlob, embeddingFromBlob } = require('./speech/engine');
 
 const MAX_TEXT = 5000;
@@ -112,7 +113,7 @@ class TranscriptStore {
       return { voiceId: v.id, key: `v:${v.id}`, label: v.name };
     }
     const label = speaker && typeof speaker.label === 'string' ? speaker.label.trim() : '';
-    if (!label || label.length > MAX_LABEL) throw new HttpError(400, `Choose a voice or type a name (at most ${MAX_LABEL} characters).`);
+    if (!label || label.length > MAX_LABEL) throw new HttpError(400, 'Choose a voice or type a name (at most {max} characters).', { max: MAX_LABEL });
     return { voiceId: null, key: `n:${label.toLowerCase()}`, label };
   }
 
@@ -158,7 +159,7 @@ class TranscriptStore {
 
   updateText(transcriptId, lineId, text) {
     if (typeof text !== 'string' || !text.trim() || text.length > MAX_TEXT) {
-      throw new HttpError(400, `Text must be 1–${MAX_TEXT} characters long. Delete the line instead of emptying it.`);
+      throw new HttpError(400, 'Text must be 1–{max} characters long. Delete the line instead of emptying it.', { max: MAX_TEXT });
     }
     const r = this.db.prepare('UPDATE transcript_lines SET text = ?, edited = 1 WHERE transcript_id = ? AND id = ?')
       .run(text.trim(), transcriptId, lineId);
@@ -173,7 +174,7 @@ class TranscriptStore {
   }
 
   rename(transcriptId, title) {
-    if (typeof title !== 'string' || title.trim().length > MAX_TITLE) throw new HttpError(400, `Titles may be at most ${MAX_TITLE} characters long.`);
+    if (typeof title !== 'string' || title.trim().length > MAX_TITLE) throw new HttpError(400, 'Titles may be at most {max} characters long.', { max: MAX_TITLE });
     this.get(transcriptId);
     this.db.prepare('UPDATE transcripts SET title = ? WHERE id = ?').run(title.trim(), transcriptId);
   }
@@ -279,38 +280,44 @@ class TranscriptStore {
     };
   }
 
-  title(t) {
-    return t.title || `Transcript of ${localDateTime(t.started_at)}`;
+  title(t, lang = 'en') {
+    return t.title || translate(lang, 'Transcript of {date}', { date: localDateTime(t.started_at) });
   }
 
   /** @returns {{ filename, type, body }} */
-  export(transcriptId, format) {
+  /** Speaker names as the user reads them: unknown speakers ("Speaker 2") in their language. */
+  speakerName(name, lang) {
+    const m = /^Speaker (\d+)$/.exec(name);
+    return m ? translate(lang, 'Speaker {n}', { n: m[1] }) : name;
+  }
+
+  export(transcriptId, format, lang = 'en') {
     const t = this.get(transcriptId);
     const lines = this.lines(transcriptId);
     const base = `transcript-${t.id}-${localDateTime(t.started_at).slice(0, 10)}`;
     if (format === 'txt') {
-      const head = `${this.title(t)}\n${localDateTime(t.started_at)}, ${clockOffset(t.duration)}\n\n`;
-      const body = lines.map((l) => `[${localTime(l.spokenAt)}] ${l.speaker.name}: ${l.text}`).join('\n');
+      const head = `${this.title(t, lang)}\n${localDateTime(t.started_at)}, ${clockOffset(t.duration)}\n\n`;
+      const body = lines.map((l) => `[${localTime(l.spokenAt)}] ${this.speakerName(l.speaker.name, lang)}: ${l.text}`).join('\n');
       return { filename: `${base}.txt`, type: 'text/plain; charset=utf-8', body: `${head}${body}\n` };
     }
     if (format === 'srt') {
       const body = lines.map((l, i) => {
         const end = Math.max(l.end, l.start + 0.5);
-        return `${i + 1}\n${srtTime(l.start)} --> ${srtTime(end)}\n${l.speaker.name}: ${l.text}\n`;
+        return `${i + 1}\n${srtTime(l.start)} --> ${srtTime(end)}\n${this.speakerName(l.speaker.name, lang)}: ${l.text}\n`;
       }).join('\n');
       return { filename: `${base}.srt`, type: 'application/x-subrip; charset=utf-8', body };
     }
     if (format === 'json') {
       const data = {
         id: t.id,
-        title: this.title(t),
+        title: this.title(t, lang),
         startedAt: new Date(t.started_at).toISOString(),
         duration: t.duration,
         lines: lines.map((l) => ({
           start: l.start,
           end: l.end,
           spokenAt: new Date(l.spokenAt).toISOString(),
-          speaker: l.speaker.name,
+          speaker: this.speakerName(l.speaker.name, lang),
           voiceId: l.speaker.voiceId,
           text: l.text,
           edited: l.edited,

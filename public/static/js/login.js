@@ -1,4 +1,4 @@
-import { api, themeButton } from './common.js';
+import { api, t, themeButton, languageButton } from './common.js';
 
 // Only same-origin targets: resolving the URL catches tricks like "/\evil.example", which
 // browsers treat as "//evil.example".
@@ -15,7 +15,7 @@ const next = (() => {
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
-$('corner').append(themeButton());
+$('corner').append(languageButton(), themeButton());
 
 async function init() {
   const setup = await api('/setup');
@@ -46,7 +46,7 @@ function bind(formId, errorId, submit) {
 
 bind('login-form', 'login-error', (d) => api('/login', { method: 'POST', body: { username: d.username, password: d.password } }));
 bind('setup-form', 'setup-error', (d) => {
-  if (d.password !== d.confirm) throw new Error('The passwords do not match.');
+  if (d.password !== d.confirm) throw new Error(t('The passwords do not match.'));
   return api('/setup', { method: 'POST', body: { username: d.username, password: d.password } });
 });
 

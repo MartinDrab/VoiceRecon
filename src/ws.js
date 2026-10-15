@@ -3,6 +3,7 @@
 const { WebSocketServer } = require('ws');
 const { int16ToFloat } = require('./audio');
 const { TranscriptionSession } = require('./transcriber');
+const { LANGUAGES, translate, languageOf } = require('./i18n');
 
 const MAX_FRAME_BYTES = 1 << 20;
 
@@ -36,11 +37,11 @@ function sameOrigin(req) {
  */
 function attachWebSocket(server, { auth, engine, voices, transcripts }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
-  const clients = new Set();
+  const clients = new Map(); // open connection -> () => its language
 
   const voicesMessage = () => JSON.stringify({ type: 'voices', voices: voices.summary(), threshold: voices.threshold });
   const broadcast = (text) => {
-    for (const ws of clients) if (ws.readyState === ws.OPEN) ws.send(text);
+    for (const ws of clients.keys()) if (ws.readyState === ws.OPEN) ws.send(text);
   };
   voices.on('changed', () => broadcast(voicesMessage()));
 
@@ -57,21 +58,24 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       const token = auth.tokenFromRequest(req);
       const user = auth.userFromToken(token);
       if (!user) return reject(401, 'Unauthorized');
-      wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, user, token));
+      wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, user, token, languageOf(req)));
     } catch (err) {
       console.error('WebSocket upgrade failed:', err.message);
       if (!socket.destroyed) reject(400, 'Bad Request');
     }
   });
 
-  function onConnection(ws, user, token) {
-    clients.add(ws);
+  function onConnection(ws, user, token, initialLang) {
+    let lang = initialLang; // follows the page's language ({ type: 'language' }) for messages
+    /** A user-facing message in the connection's language. */
+    const tr = (err) => translate(lang, err.template || err.message || String(err), err.params);
+    clients.set(ws, () => lang);
     let session = null;
     let alive = true;
     const send = (obj) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(obj));
     const fail = (err) => {
       console.error('Transcription error:', err);
-      send({ type: 'error', message: err.message || String(err) });
+      send({ type: 'error', message: tr(err) });
     };
 
     // The saved transcript this connection writes to. offset maps session times to transcript times.
@@ -157,7 +161,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
     const ensureSession = () => {
       if (session) return session;
       if (!engine.ready) {
-        send({ type: 'error', message: 'Speech models are still loading. Try again in a moment.' });
+        send({ type: 'error', message: tr({ message: 'Speech models are still loading. Try again in a moment.' }) });
         return null;
       }
       session = new TranscriptionSession(engine, voices);
@@ -169,7 +173,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       return session;
     };
 
-    send({ type: 'hello', user, ready: engine.ready, error: engine.loadError && engine.loadError.message });
+    send({ type: 'hello', user, ready: engine.ready, error: engine.loadError && tr(engine.loadError) });
     ws.send(voicesMessage());
 
     // Exceptions thrown from this listener would be uncaught and stop the server.
@@ -191,7 +195,11 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       try {
         msg = JSON.parse(String(data));
       } catch { /* handled below */ }
-      if (!msg || typeof msg !== 'object') return send({ type: 'error', message: 'Invalid message.' });
+      if (!msg || typeof msg !== 'object') return send({ type: 'error', message: tr(new Error('Invalid message.')) });
+      if (msg.type === 'language') {
+        if (LANGUAGES.includes(msg.lang)) lang = msg.lang;
+        return;
+      }
       if (msg.type === 'start') {
         if (ensureSession()) attach(msg.transcriptId);
       } else if (msg.type === 'newTranscript') {
@@ -208,7 +216,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
           const voiceId = session.saveUnknown(msg.speakerId, { name: msg.name, color: msg.color });
           send({ type: 'saved', speakerId: msg.speakerId, voiceId });
         } catch (err) {
-          send({ type: 'error', message: err.message });
+          send({ type: 'error', message: tr(err) });
         }
       } else if (msg.type === 'assignUnknown' || msg.type === 'correct') {
         try {
@@ -231,7 +239,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
             send({ type: 'corrected', ids: msg.ids, voiceId: msg.voiceId, learned });
           }
         } catch (err) {
-          send({ type: 'error', message: err.message });
+          send({ type: 'error', message: tr(err) });
         }
       }
     }
@@ -257,7 +265,12 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
 
   return {
     notifyStatus() {
-      broadcast(JSON.stringify({ type: 'status', ready: engine.ready, error: engine.loadError && engine.loadError.message }));
+      const err = engine.loadError;
+      for (const [ws, langOf] of clients) {
+        if (ws.readyState !== ws.OPEN) continue;
+        const error = err ? translate(langOf(), err.template || err.message, err.params) : null;
+        ws.send(JSON.stringify({ type: 'status', ready: engine.ready, error }));
+      }
     },
   };
 }

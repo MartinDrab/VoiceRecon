@@ -174,7 +174,10 @@ class VoiceManager extends EventEmitter {
     const speech = this.engine.speechOnly(audio);
     const speechDuration = speech.length / SAMPLE_RATE;
     if (speechDuration < MIN_SPEECH_SECONDS) {
-      throw new HttpError(400, `Not enough speech in the recording (found ${speechDuration.toFixed(1)} s, need at least ${MIN_SPEECH_SECONDS} s).`);
+      throw new HttpError(400, 'Not enough speech in the recording (found {found} s, need at least {need} s).', {
+        found: speechDuration.toFixed(1),
+        need: MIN_SPEECH_SECONDS,
+      });
     }
     const embedding = this.engine.embedLong(speech);
     if (!embedding) throw new HttpError(400, 'Could not compute a voice print from this recording.');

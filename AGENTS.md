@@ -15,7 +15,7 @@ native addon):
 - **Parakeet TDT 0.6B v3** (int8) does speech-to-text. It covers Czech, English and 23 other languages, and detects the language automatically; `result.lang` is always empty.
 - **CAM++** (3D-Speaker) computes speaker embeddings (voice prints).
 
-The UI and all text are in English; the transcribed speech is mainly Czech.
+The UI is in English and Czech (chosen per browser); the transcribed speech is mainly Czech.
 
 ## Commands
 
@@ -119,7 +119,8 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 - The microphone is chosen in one place: `preferredMicrophone()` in `public/static/js/audio.js`, used by every `MicCapture`; a missing device falls back to the default (`fellBack`).
 - User-facing messages are full sentences ending with a period.
 - Colors only through the CSS custom properties at the top of `app.css`. The light values are on `:root`; the dark values exist twice, once for the system setting (`@media (prefers-color-scheme: dark) :root:not([data-theme="light"])`) and once for the manual choice (`:root[data-theme="dark"]`). Keep both dark blocks identical and give every new color token a light and a dark value; `test/ui.test.js` checks this. Text in a voice's color goes through `oklch(from var(--c) clamp(var(--voice-l-min), l, var(--voice-l-max)) c h)` so any chosen color stays readable.
-- Every page loads `/static/js/theme.js` as a plain (blocking) script before `app.css`; it applies the saved theme before the first paint. Check new UI in both themes (`resize_window` with `colorScheme`, or the theme button).
+- Every page loads `/static/js/boot.js` as a plain (blocking) script before `app.css`; it applies the saved theme and sets `<html lang>` before the first paint. Check new UI in both themes (`resize_window` with `colorScheme`, or the theme button) and in both languages.
+- **Every user-facing text is translated; English is the key.** Pages: mark static HTML with `data-i18n` (the text is the key; a template like `data-i18n="Press {0} or {1}."` keeps child elements as `{0}`, `{1}`) or `data-i18n-attr="placeholder,title"`; in scripts use `t('Text with {name}', { name })` and `plural(n, '{n} line', '{n} lines')` from `common.js`, always with string literals. Add the Czech text to `public/static/js/lang/cs.js` (counts need `one`, `few` and `other` forms). Server: throw `new HttpError(status, 'Text with {name}.', { name })`, never a message built with `${}`, and add the Czech text to `src/lang/cs.js`; the error handler and the WebSocket translate it for each client (`vr_lang` cookie, else `Accept-Language`). Stored data stays in English (e.g. `Speaker 2`, `From live transcript`) and is translated when shown. `test/i18n.test.js` fails on a missing or unused Czech text. Dates and numbers go through `locale` / `formatNumber()` (Czech uses `15. 10. 2026` and `0,40`).
 
 ## Platform gotchas (Windows dev machine)
 

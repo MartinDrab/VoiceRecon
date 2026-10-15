@@ -15,9 +15,9 @@ test('every page applies the saved theme before its stylesheet (no flash of the 
   assert.ok(pages.length >= 6);
   for (const page of pages) {
     const html = fs.readFileSync(path.join(PUBLIC, page), 'utf8');
-    const theme = html.indexOf('<script src="/static/js/theme.js"></script>');
+    const theme = html.indexOf('<script src="/static/js/boot.js"></script>');
     const style = html.indexOf('<link rel="stylesheet" href="/static/css/app.css">');
-    assert.ok(theme > 0 && style > theme, `${page} must load theme.js (not as a module) before app.css`);
+    assert.ok(theme > 0 && style > theme, `${page} must load boot.js (not as a module) before app.css`);
   }
 });
 

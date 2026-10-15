@@ -1,4 +1,6 @@
-import { api, h, toast, initPage, formatDuration, formatDateTime, transcriptTitle, snippetNodes, speakerColor } from './common.js';
+import {
+  api, h, toast, initPage, formatDuration, formatDateTime, transcriptTitle, snippetNodes, speakerColor, t, plural, speakerLabel,
+} from './common.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
@@ -8,24 +10,24 @@ let shown = [];
 let total = 0;
 let requestNo = 0;
 
-function item(t) {
+function item(tr) {
   const params = new URLSearchParams();
   if (query) params.set('q', query);
   const href = (lineId) => {
     const p = new URLSearchParams(params);
     if (lineId) p.set('line', lineId);
     const qs = p.toString();
-    return `/history/${t.id}${qs ? `?${qs}` : ''}`;
+    return `/history/${tr.id}${qs ? `?${qs}` : ''}`;
   };
-  const meta = [formatDateTime(t.startedAt), formatDuration(t.duration), `${t.lines} line${t.lines === 1 ? '' : 's'}`];
-  if (t.user) meta.push(`by ${t.user}`);
-  const body = t.snippets
-    ? t.snippets.map((s) => h('a.snippet', { href: href(s.lineId) }, snippetNodes(s.text)))
-    : [h('p.preview', {}, t.preview || 'No lines yet.')];
+  const meta = [formatDateTime(tr.startedAt), formatDuration(tr.duration), plural(tr.lines, '{n} line', '{n} lines')];
+  if (tr.user) meta.push(t('by {user}', { user: tr.user }));
+  const body = tr.snippets
+    ? tr.snippets.map((s) => h('a.snippet', { href: href(s.lineId) }, snippetNodes(s.text)))
+    : [h('p.preview', {}, tr.preview || t('No lines yet.'))];
   return h('article.card.history-item', {},
-    h('a.history-title', { href: href() }, transcriptTitle(t)),
-    h('div.muted.small', {}, meta.join(' · '), t.hits > 3 ? ` · ${t.hits} matching lines` : ''),
-    h('div.chips', {}, t.speakers.slice(0, 8).map((s) => h('span.chip', { style: { '--c': speakerColor(s) } }, s.name))),
+    h('a.history-title', { href: href() }, transcriptTitle(tr)),
+    h('div.muted.small', {}, meta.join(' · '), tr.hits > 3 ? ` · ${plural(tr.hits, '{n} matching line', '{n} matching lines')}` : ''),
+    h('div.chips', {}, tr.speakers.slice(0, 8).map((s) => h('span.chip', { style: { '--c': speakerColor(s) } }, speakerLabel(s.name)))),
     ...body);
 }
 
@@ -33,10 +35,10 @@ function render() {
   $('list').replaceChildren(...shown.map(item));
   if (!shown.length) {
     $('list').append(h('div.card.empty-state', {}, query
-      ? h('p', {}, 'No transcript contains all of these words.')
-      : h('p', {}, 'Nothing saved yet. Transcripts appear here once something has been said on the Transcript page.')));
+      ? h('p', {}, t('No transcript contains all of these words.'))
+      : h('p', {}, t('Nothing saved yet. Transcripts appear here once something has been said on the Transcript page.'))));
   }
-  $('note').textContent = query ? `${total} transcript${total === 1 ? '' : 's'} found.` : '';
+  $('note').textContent = query ? plural(total, '{n} transcript found.', '{n} transcripts found.') : '';
   $('more').classList.toggle('hidden', shown.length >= total);
 }
 

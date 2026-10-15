@@ -59,7 +59,7 @@ function validateUsername(username) {
 
 function validatePassword(password) {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD || password.length > 200) {
-    throw new HttpError(400, `Password must be at least ${MIN_PASSWORD} characters long.`);
+    throw new HttpError(400, 'Password must be at least {min} characters long.', { min: MIN_PASSWORD });
   }
 }
 
@@ -112,7 +112,7 @@ class Auth {
     // Check and insert with no await in between, so concurrent requests cannot both pass.
     if (onlyIfNoUsers && this.countUsers() > 0) throw new HttpError(409, 'The application is already set up.');
     if (this.db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) {
-      throw new HttpError(409, `User "${username}" already exists.`);
+      throw new HttpError(409, 'User "{username}" already exists.', { username });
     }
     const { lastInsertRowid } = this.db
       .prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)')

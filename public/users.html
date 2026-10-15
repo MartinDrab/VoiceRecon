@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Users · VoiceRecon</title>
+  <title data-i18n>Users · VoiceRecon</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <script src="/static/js/theme.js"></script>
+  <script src="/static/js/boot.js"></script>
   <link rel="stylesheet" href="/static/css/app.css">
   <script type="module" src="/static/js/users.js"></script>
 </head>
@@ -14,31 +14,31 @@
     <section id="admin-section" class="hidden">
       <div class="page-head">
         <div>
-          <h1>Users</h1>
-          <p class="muted">Everyone who can sign in to VoiceRecon. Administrators can also manage users and the match threshold.</p>
+          <h1 data-i18n>Users</h1>
+          <p class="muted" data-i18n>Everyone who can sign in to VoiceRecon. Administrators can also manage users and the match threshold.</p>
         </div>
       </div>
 
       <div class="card">
         <table>
-          <thead><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead>
+          <thead><tr><th data-i18n>Username</th><th data-i18n>Role</th><th data-i18n>Created</th><th></th></tr></thead>
           <tbody id="user-rows"></tbody>
         </table>
       </div>
 
       <div class="card mt">
-        <h2>Add user</h2>
+        <h2 data-i18n>Add user</h2>
         <form id="add-form" class="form-row" autocomplete="off">
-          <label class="field">Username
+          <label class="field"><span data-i18n>Username</span>
             <input type="text" name="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="off">
           </label>
-          <label class="field">Password
+          <label class="field"><span data-i18n>Password</span>
             <input type="password" name="password" required minlength="8" autocomplete="new-password">
           </label>
-          <label class="field">Role
-            <select name="role"><option value="user">User</option><option value="admin">Administrator</option></select>
+          <label class="field"><span data-i18n>Role</span>
+            <select name="role"><option value="user" data-i18n>User</option><option value="admin" data-i18n>Administrator</option></select>
           </label>
-          <button class="btn btn-primary" type="submit">Add user</button>
+          <button class="btn btn-primary" type="submit" data-i18n>Add user</button>
         </form>
         <p class="error-text" id="add-error"></p>
       </div>
@@ -47,23 +47,23 @@
     <section class="mt" id="account-section">
       <div class="page-head" id="account-head">
         <div>
-          <h1>My account</h1>
+          <h1 data-i18n>My account</h1>
           <p class="muted" id="account-info"></p>
         </div>
       </div>
       <div class="card">
-        <h2>Change password</h2>
+        <h2 data-i18n>Change password</h2>
         <form id="password-form" class="form-row">
-          <label class="field">Current password
+          <label class="field"><span data-i18n>Current password</span>
             <input type="password" name="currentPassword" required autocomplete="current-password">
           </label>
-          <label class="field">New password
+          <label class="field"><span data-i18n>New password</span>
             <input type="password" name="newPassword" required minlength="8" autocomplete="new-password">
           </label>
-          <label class="field">Confirm new password
+          <label class="field"><span data-i18n>Confirm new password</span>
             <input type="password" name="confirm" required minlength="8" autocomplete="new-password">
           </label>
-          <button class="btn btn-primary" type="submit">Change password</button>
+          <button class="btn btn-primary" type="submit" data-i18n>Change password</button>
         </form>
         <p class="error-text" id="password-error"></p>
       </div>
@@ -72,14 +72,14 @@
 
   <dialog id="reset-dialog">
     <form method="dialog" id="reset-form">
-      <h2 id="reset-title">Set password</h2>
-      <label class="field">New password
+      <h2 id="reset-title" data-i18n>Set password</h2>
+      <label class="field"><span data-i18n>New password</span>
         <input type="password" id="reset-password" required minlength="8" autocomplete="new-password">
       </label>
       <p class="error-text" id="reset-error"></p>
       <div class="buttons">
-        <button class="btn" type="button" id="reset-cancel">Cancel</button>
-        <button class="btn btn-primary" type="submit">Set password</button>
+        <button class="btn" type="button" id="reset-cancel" data-i18n>Cancel</button>
+        <button class="btn btn-primary" type="submit" data-i18n>Set password</button>
       </div>
     </form>
   </dialog>

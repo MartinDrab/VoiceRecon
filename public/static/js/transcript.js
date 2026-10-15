@@ -1,4 +1,7 @@
-import { api, h, icon, toast, logout, nextColor, themeLabel, nextTheme } from './common.js';
+import {
+  api, h, icon, toast, logout, nextColor, themeLabel, nextTheme, t, locale, speakerLabel, otherLanguage, switchLanguage,
+} from './common.js';
+import { LANGUAGES } from './i18n.js';
 import {
   MicCapture, wavFromInt16, SAMPLE_RATE, listMicrophones, preferredMicrophone, setPreferredMicrophone,
 } from './audio.js';
@@ -56,16 +59,16 @@ function speakerKey(sp, ep = epoch) {
 function speakerInfo(sp) {
   if (sp.kind === 'voice') {
     const v = voices.get(sp.id);
-    return v ? { name: v.name, color: v.color } : { name: 'Deleted voice', color: NONE_COLOR };
+    return v ? { name: v.name, color: v.color } : { name: t('Deleted voice'), color: NONE_COLOR };
   }
   if (sp.kind === 'unknown' && sp.id) {
     const n = parseInt(String(sp.id).replace(/\D/g, ''), 10) || 0;
-    return { name: sp.label, color: UNKNOWN_COLORS[(n - 1) % UNKNOWN_COLORS.length], unknown: true };
+    return { name: speakerLabel(sp.label), color: UNKNOWN_COLORS[(n - 1) % UNKNOWN_COLORS.length], unknown: true };
   }
-  return { name: sp.kind === 'unknown' ? 'Unknown' : '…', color: NONE_COLOR, unknown: true };
+  return { name: sp.kind === 'unknown' ? t('Unknown') : '…', color: NONE_COLOR, unknown: true };
 }
 
-const clock = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const clock = (d) => d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 /** Lines of the current server session can be corrected: their voice prints are still there. */
 const correctable = (turn) => Boolean(turn && turn.epoch === epoch && turn.ids.length && ws && ws.readyState === WebSocket.OPEN);
@@ -76,7 +79,7 @@ function renderHeader(turnEl, sp, wall, turn = null) {
   turnEl.classList.toggle('unknown', Boolean(info.unknown));
   const parts = [h('span.name', {}, info.name), wall ? h('span.time', {}, clock(wall)) : null];
   const who = correctable(turn)
-    ? h('button.who', { type: 'button', title: 'Wrong person? Click to correct', onclick: () => openWho(turn) }, parts)
+    ? h('button.who', { type: 'button', title: t('Wrong person? Click to correct'), onclick: () => openWho(turn) }, parts)
     : h('div.who', {}, parts);
   const old = turnEl.querySelector('.who');
   if (old) old.replaceWith(who);
@@ -175,7 +178,7 @@ function setTranscriptId(id) {
     else sessionStorage.removeItem(TRANSCRIPT_ID_KEY);
   } catch { /* storage unavailable */ }
   $('history-link').href = id ? `/history/${id}` : '/history';
-  $('history-link').textContent = id ? 'Open in History' : 'History';
+  $('history-link').textContent = id ? t('Open in History') : t('History');
 }
 
 const startMessage = () => JSON.stringify({ type: 'start', transcriptId: savedTranscriptId() });
@@ -221,7 +224,7 @@ function download() {
 
 function keepChunk(pcm) {
   if (keptSamples >= MAX_KEPT_SECONDS * SAMPLE_RATE) {
-    if (!keptFull) toast('Audio is kept for at most 3 hours; later audio is not kept.', { error: true });
+    if (!keptFull) toast(t('Audio is kept for at most 3 hours; later audio is not kept.'), { error: true });
     keptFull = true;
     return;
   }
@@ -248,9 +251,9 @@ function downloadAudio() {
 function renderAudioMenu() {
   const s = Math.floor(keptSamples / SAMPLE_RATE);
   const length = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  $('keep-audio').textContent = `${keepAudio ? '✓ ' : ''}Keep audio for download`;
+  $('keep-audio').textContent = `${keepAudio ? '✓ ' : ''}${t('Keep audio for download')}`;
   $('keep-audio').setAttribute('aria-checked', String(keepAudio));
-  $('download-audio').textContent = `Download recording (${length})`;
+  $('download-audio').textContent = t('Download recording ({length})', { length });
   $('download-audio').classList.toggle('hidden', keptSamples === 0);
 }
 
@@ -265,13 +268,13 @@ function refreshStatus() {
   const open = ws && ws.readyState === WebSocket.OPEN;
   const rec = $('rec');
   rec.disabled = !open || !modelsReady || stopping;
-  rec.replaceChildren(icon(listening ? 'stop' : 'mic'), listening ? 'Stop' : 'Start');
+  rec.replaceChildren(icon(listening ? 'stop' : 'mic'), listening ? t('Stop') : t('Start'));
   rec.classList.toggle('on', listening);
-  if (!open) setStatus(listening ? 'Reconnecting… (audio is not being sent)' : 'Connecting…', 'wait');
-  else if (!modelsReady) setStatus('Loading speech models…', 'wait');
-  else if (stopping) setStatus('Finishing…', 'wait');
-  else if (listening) setStatus('Listening', 'live');
-  else setStatus('Ready', 'ready');
+  if (!open) setStatus(listening ? t('Reconnecting… (audio is not being sent)') : t('Connecting…'), 'wait');
+  else if (!modelsReady) setStatus(t('Loading speech models…'), 'wait');
+  else if (stopping) setStatus(t('Finishing…'), 'wait');
+  else if (listening) setStatus(t('Listening'), 'live');
+  else setStatus(t('Ready'), 'ready');
   if (!listening) $('level').style.width = '0';
 }
 
@@ -286,6 +289,7 @@ function connect() {
 
   ws.onopen = () => {
     reconnectDelay = 1000;
+    ws.send(JSON.stringify({ type: 'language', lang: document.documentElement.lang }));
     if (listening) ws.send(startMessage());
     refreshStatus();
     rerenderAll();
@@ -296,7 +300,7 @@ function connect() {
       case 'hello':
       case 'status':
         modelsReady = msg.ready;
-        if (msg.error) toast(`Speech models failed to load: ${msg.error}`, { error: true });
+        if (msg.error) toast(t('Speech models failed to load: {error}', { error: msg.error }), { error: true });
         refreshStatus();
         break;
       case 'voices':
@@ -315,7 +319,7 @@ function connect() {
         break;
       case 'saved':
         $('who-dialog').close();
-        toast('Voice saved. It will be recognized from now on.');
+        toast(t('Voice saved. It will be recognized from now on.'));
         break;
       case 'transcript':
         setTranscriptId(msg.id);
@@ -358,13 +362,15 @@ function createMic() {
   });
 }
 
-const micError = (err) => (err.name === 'NotAllowedError' ? 'Microphone access was denied.' : err.message);
+const micError = (err) => (err.name === 'NotAllowedError' ? t('Microphone access was denied.') : err.message);
 
 /** After a microphone started: say so if the chosen one was missing, and show which one is used. */
 function micStarted(m) {
   if (m.fellBack) {
     const chosen = preferredMicrophone();
-    toast(`${chosen && chosen.label ? `“${chosen.label}”` : 'The chosen microphone'} is not available, so the default one is used.`, { error: true });
+    toast(chosen && chosen.label
+      ? t('“{name}” is not available, so the default one is used.', { name: chosen.label })
+      : t('The chosen microphone is not available, so the default one is used.'), { error: true });
   }
   renderMicChoice();
 }
@@ -392,13 +398,13 @@ async function start() {
 function micName() {
   if (mic && mic.label) return mic.label;
   const chosen = preferredMicrophone();
-  return chosen ? chosen.label || 'Chosen microphone' : 'System default';
+  return chosen ? chosen.label || t('Chosen microphone') : t('System default');
 }
 
 function renderMicChoice() {
   const chosen = preferredMicrophone();
-  $('mic-choice').textContent = `Microphone: ${chosen ? chosen.label || 'Chosen microphone' : 'System default'}`;
-  $('level').parentElement.title = `Microphone level: ${micName()}`;
+  $('mic-choice').textContent = t('Microphone: {name}', { name: chosen ? chosen.label || t('Chosen microphone') : t('System default') });
+  $('level').parentElement.title = t('Microphone level: {name}', { name: micName() });
 }
 
 async function renderMicDialog() {
@@ -410,15 +416,16 @@ async function renderMicDialog() {
   const choice = (device, name) => {
     const current = chosen ? Boolean(device) && device.deviceId === chosen.id : !device;
     return h('button.voice-choice', { type: 'button', 'aria-current': current ? 'true' : 'false', onclick: () => chooseMic(device) },
-      h('span', {}, name), current ? h('span.current', {}, 'chosen') : null);
+      h('span', {}, name), current ? h('span.current', {}, t('chosen')) : null);
   };
   $('mic-choices').replaceChildren(
-    choice(null, 'System default'),
-    ...devices.map((d, i) => choice(d, d.label || `Microphone ${i + 1}`)));
+    choice(null, t('System default')),
+    ...devices.map((d, i) => choice(d, d.label || t('Microphone {n}', { n: i + 1 }))));
   const unnamed = devices.length && devices.every((d) => !d.label);
   $('mic-hint').textContent = unnamed
-    ? 'The browser shows microphone names after you allow microphone access: press Start once, then come back here.'
-    : `The chosen microphone is also used for recordings on the Voices page.${listening ? ' Switching takes effect immediately.' : ''}`;
+    ? t('The browser shows microphone names after you allow microphone access: press Start once, then come back here.')
+    : t('The chosen microphone is also used for recordings on the Voices page.')
+      + (listening ? ` ${t('Switching takes effect immediately.')}` : '');
 }
 
 async function chooseMic(device) {
@@ -435,7 +442,7 @@ async function chooseMic(device) {
     await next.start();
     mic = next;
     micStarted(next);
-    toast(`Now listening with ${micName()}.`);
+    toast(t('Now listening with {name}.', { name: micName() }));
   } catch (err) {
     toast(micError(err), { error: true });
     await stop();
@@ -494,7 +501,7 @@ let whoTurn = null;
 
 function send(obj) {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    $('who-error').textContent = 'Not connected to the server. Try again in a moment.';
+    $('who-error').textContent = t('Not connected to the server. Try again in a moment.');
     return;
   }
   ws.send(JSON.stringify(obj));
@@ -505,8 +512,8 @@ function openWho(turn) {
   const sp = turn.speaker;
   const unknown = sp.kind === 'unknown' && Boolean(sp.id);
   $('who-hint').textContent = unknown
-    ? `Pick who “${sp.label}” is. All their lines in this session are reassigned and the voice learns how they sound.`
-    : 'Pick who really said this. The voice learns how the line sounded and is recognized better next time.';
+    ? t('Pick who “{name}” is. All their lines in this session are reassigned and the voice learns how they sound.', { name: speakerLabel(sp.label) })
+    : t('Pick who really said this. The voice learns how the line sounded and is recognized better next time.');
   const list = [...voices.values()].sort((a, b) => a.name.localeCompare(b.name));
   $('who-choices').replaceChildren(...(list.length
     ? list.map((v) => {
@@ -516,9 +523,9 @@ function openWho(turn) {
         'aria-current': current ? 'true' : 'false',
         style: { '--c': v.color },
         onclick: () => pickVoice(v.id),
-      }, h('span.swatch'), h('span', {}, v.name), current ? h('span.current', {}, 'current') : null);
+      }, h('span.swatch'), h('span', {}, v.name), current ? h('span.current', {}, t('current')) : null);
     })
-    : [h('p.muted.small', {}, 'There are no voices yet.')]));
+    : [h('p.muted.small', {}, t('There are no voices yet.'))]));
   $('save-form').classList.toggle('hidden', !unknown);
   $('save-name').value = '';
   $('save-color').value = nextColor(list.map((v) => v.color));
@@ -546,9 +553,9 @@ function corrected(msg) {
   }
   $('who-dialog').close();
   const v = voices.get(msg.voiceId);
-  toast(msg.learned
-    ? `Corrected. ${v ? v.name : 'The voice'} will be recognized better from now on.`
-    : 'Corrected. The line was too short to learn from.');
+  if (!msg.learned) toast(t('Corrected. The line was too short to learn from.'));
+  else if (v) toast(t('Corrected. {name} will be recognized better from now on.', { name: v.name }));
+  else toast(t('Corrected. The voice will be recognized better from now on.'));
 }
 
 $('save-form').addEventListener('submit', (e) => {
@@ -588,16 +595,16 @@ document.addEventListener('click', () => toggleMenu(false));
 $('download').addEventListener('click', download);
 $('download-audio').addEventListener('click', downloadAudio);
 $('keep-audio').addEventListener('click', () => {
-  if (keepAudio && keptSamples && !confirm('Stop keeping audio and discard what was kept so far?')) return;
+  if (keepAudio && keptSamples && !confirm(t('Stop keeping audio and discard what was kept so far?'))) return;
   keepAudio = !keepAudio;
   writeSetting(KEEP_AUDIO_KEY, keepAudio ? '1' : '0');
   if (!keepAudio) discardAudio();
-  toast(keepAudio ? 'Microphone audio will be kept in this tab until you clear the transcript.' : 'Audio is no longer kept.');
+  toast(keepAudio ? t('Microphone audio will be kept in this tab until you clear the transcript.') : t('Audio is no longer kept.'));
 });
 $('clear').addEventListener('click', () => {
   if (!turns.length && !keptSamples) return;
-  const question = 'Start a new transcript? The current one stays saved in History.'
-    + (keptSamples ? ' The audio kept for download is discarded.' : '');
+  const question = t('Start a new transcript? The current one stays saved in History.')
+    + (keptSamples ? ` ${t('The audio kept for download is discarded.')}` : '');
   if (confirm(question)) clearTranscript();
 });
 $('fullscreen').addEventListener('click', () => {
@@ -606,7 +613,7 @@ $('fullscreen').addEventListener('click', () => {
 });
 $('logout').addEventListener('click', logout);
 const renderTheme = () => {
-  $('theme').textContent = `Theme: ${themeLabel()}`;
+  $('theme').textContent = t('Theme: {name}', { name: themeLabel() });
 };
 $('theme').addEventListener('click', (e) => {
   e.stopPropagation(); // keep the menu open, so the themes can be clicked through
@@ -614,6 +621,14 @@ $('theme').addEventListener('click', (e) => {
 });
 window.addEventListener('voicerecon-theme', renderTheme);
 renderTheme();
+
+// The other language, named in that language; the page reloads in it (the transcript is kept).
+$('language').textContent = LANGUAGES[otherLanguage];
+$('language').lang = otherLanguage;
+$('language').addEventListener('click', () => {
+  if (listening && !confirm(t('Switching the language reloads the page and stops listening. Switch anyway?'))) return;
+  switchLanguage();
+});
 
 $('scroll').addEventListener('scroll', () => {
   if (isAtBottom()) $('jump').classList.add('hidden');
@@ -641,7 +656,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 api('/me').then(({ user }) => {
-  if (user.role !== 'admin') $('users-link').textContent = 'Account';
+  if (user.role !== 'admin') $('users-link').textContent = t('Account');
   restore();
   setTranscriptId(savedTranscriptId());
   connect();

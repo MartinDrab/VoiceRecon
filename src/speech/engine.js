@@ -3,6 +3,7 @@
 const fs = require('fs');
 const sherpa = require('sherpa-onnx-node');
 const { concat, resample } = require('../audio');
+const { HttpError } = require('../errors');
 
 const SAMPLE_RATE = 16000;
 const VAD_WINDOW = 512; // samples per Silero VAD step at 16 kHz
@@ -70,7 +71,7 @@ class SpeechEngine {
     try {
       const missing = this.modelFiles().filter((f) => !fs.existsSync(f));
       if (missing.length) {
-        throw new Error(`Missing model files (run "npm run models"):\n  ${missing.join('\n  ')}`);
+        throw new HttpError(500, 'Missing model files (run "npm run models"):\n{files}', { files: missing.map((f) => `  ${f}`).join('\n') });
       }
       const { asr, threads, speakerModel } = this.config;
       this.extractor = new sherpa.SpeakerEmbeddingExtractor({ model: speakerModel, numThreads: Math.min(2, threads), debug: 0 });
