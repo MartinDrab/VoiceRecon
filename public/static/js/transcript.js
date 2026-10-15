@@ -2,6 +2,7 @@ import {
   api, h, icon, toast, logout, nextColor, themeLabel, nextTheme, t, locale, speakerLabel, otherLanguage, switchLanguage,
 } from './common.js';
 import { LANGUAGES } from './i18n.js';
+import { transcribeFile } from './transcribe-file.js';
 import {
   MicCapture, wavFromInt16, SAMPLE_RATE, listMicrophones, preferredMicrophone, setPreferredMicrophone,
 } from './audio.js';
@@ -593,6 +594,8 @@ $('menu-btn').addEventListener('click', (e) => {
 });
 document.addEventListener('click', () => toggleMenu(false));
 $('download').addEventListener('click', download);
+// The file is transcribed on the server, into a transcript of its own; listening goes on here.
+$('transcribe-file').addEventListener('click', () => transcribeFile({ open: false }));
 $('download-audio').addEventListener('click', downloadAudio);
 $('keep-audio').addEventListener('click', () => {
   if (keepAudio && keptSamples && !confirm(t('Stop keeping audio and discard what was kept so far?'))) return;

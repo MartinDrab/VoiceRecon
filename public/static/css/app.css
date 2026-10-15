@@ -469,7 +469,11 @@ input.search { width: min(360px, 100%); }
 .head-tools { flex: 0 1 540px; min-width: 0; margin-left: auto; flex-wrap: nowrap; justify-content: flex-end; }
 .head-tools input.search { flex: 1 1 auto; width: auto; min-width: 0; }
 .head-tools .btn { flex: none; }
-.upload-card { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+/* "Transcribe a file": floats above the page (also the full-screen Transcript page), above the toasts */
+.upload-card {
+  position: fixed; left: 50%; bottom: 5rem; transform: translateX(-50%); z-index: 20;
+  width: min(520px, calc(100vw - 2rem)); display: flex; flex-direction: column; gap: 0.75rem; box-shadow: var(--shadow-lg);
+}
 .progress { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .progress > div { height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 0.2s; }
 .history-list { display: flex; flex-direction: column; gap: 0.75rem; }

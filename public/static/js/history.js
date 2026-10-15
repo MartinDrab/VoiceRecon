@@ -1,9 +1,8 @@
 import {
-  api, upload, h, icon, toast, initPage, formatDuration, formatDateTime, formatPercent, transcriptTitle, statusBadge,
-  snippetNodes, speakerColor, t, plural, speakerLabel,
+  api, h, icon, toast, initPage, formatDuration, formatDateTime, transcriptTitle, statusBadge, snippetNodes, speakerColor,
+  t, plural, speakerLabel,
 } from './common.js';
-import { wavFromInt16, SAMPLE_RATE } from './audio.js';
-import { chooseFileLength } from './file-length.js';
+import { transcribeFile } from './transcribe-file.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
@@ -13,7 +12,6 @@ let shown = [];
 let total = 0;
 let requestNo = 0;
 let refreshTimer = null;
-const MAX_HOURS = 4; // as the server accepts (src/uploads.js)
 
 function item(tr) {
   const params = new URLSearchParams();
@@ -84,66 +82,7 @@ $('more').addEventListener('click', () => load({ append: true }));
 
 // ---------- transcribing a file ----------
 
-let uploading = null; // AbortController of the file being uploaded
-
-function showUpload(text, fraction) {
-  $('upload').classList.remove('hidden');
-  $('upload-text').textContent = text;
-  $('upload-bar').style.width = `${Math.round(fraction * 100)}%`;
-}
-
-function hideUpload() {
-  $('upload').classList.add('hidden');
-  $('upload-btn').disabled = false;
-  uploading = null;
-}
-
-/**
- * Uploads a file read by the length dialog (all of it or its first part) and opens the new
- * transcript, which fills in as it is transcribed.
- * @param {import('./file-length.js').ChosenFile} chosen
- */
-async function transcribeFile({ file, pcm, seconds }) {
-  const controller = new AbortController();
-  uploading = controller;
-  $('upload-btn').disabled = true;
-  try {
-    // The recording most likely ended when the file was last written; times count from its start.
-    const ended = file.lastModified ? Math.min(file.lastModified, Date.now()) : Date.now();
-    const params = new URLSearchParams({ name: file.name, startedAt: String(Math.max(1, ended - Math.round(seconds * 1000))) });
-    const uploadingText = (f) => t('Uploading “{name}”… {percent}', { name: file.name, percent: formatPercent(f) });
-    showUpload(uploadingText(0), 0);
-    const r = await upload(`/transcripts/upload?${params}`, wavFromInt16(pcm, SAMPLE_RATE), {
-      signal: controller.signal,
-      onProgress: (f) => showUpload(uploadingText(f), f),
-    });
-    location.href = `/history/${r.id}`;
-  } catch (err) {
-    if (!controller.signal.aborted) toast(err.message, { error: true });
-    if (uploading === controller) hideUpload();
-  }
-}
-
 $('upload-btn').replaceChildren(icon('upload'), t('Transcribe a file'));
-$('upload-btn').addEventListener('click', () => {
-  $('upload-input').value = '';
-  $('upload-input').click();
-});
-$('upload-input').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const chosen = await chooseFileLength([file], {
-    title: t('Transcribe a file'),
-    action: t('Transcribe'),
-    maxSeconds: MAX_HOURS * 3600,
-    storeKey: 'voicerecon.transcribeLength',
-    defaultLength: 10 * 60,
-  });
-  if (chosen && chosen.length) transcribeFile(chosen[0]);
-});
-$('upload-cancel').addEventListener('click', () => {
-  if (uploading) uploading.abort();
-  hideUpload();
-});
+$('upload-btn').addEventListener('click', () => transcribeFile());
 
 initPage('history').then(() => load()).catch((err) => toast(err.message, { error: true }));

@@ -147,6 +147,7 @@ export default {
   'Stop transcribing this recording? The lines found so far stay.': 'Zastavit přepis této nahrávky? Dosud přepsané řádky zůstanou.',
   'The recording is transcribed.': 'Nahrávka je přepsaná.',
   'Transcribe': 'Přepsat',
+  '“{name}” is being transcribed in the background.': '„{name}“ se přepisuje na pozadí.',
 
   // reading chosen files: their length, and how much of each to use
   'reading…': 'načítání…',
