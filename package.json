@@ -10,6 +10,7 @@
     "models": "node scripts/download-models.js",
     "create-user": "node scripts/create-user.js",
     "evaluate": "node scripts/evaluate.js",
+    "export-test": "node scripts/export-test.js",
     "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json && tsc -p public/tsconfig.json",

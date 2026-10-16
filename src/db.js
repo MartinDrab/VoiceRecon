@@ -112,6 +112,16 @@ const MIGRATIONS = [
   );
   CREATE INDEX transcript_audio_transcript ON transcript_audio(transcript_id);
   `,
+  // speaker_manual: a user chose the line's speaker (History, or a correction while listening), so
+  // deciding the speakers again (regroup.js) leaves it alone.
+  `
+  ALTER TABLE transcript_lines ADD COLUMN speaker_manual INTEGER NOT NULL DEFAULT 0;
+  `,
+  // mixed: the share of a voice recording's speech that sounds like another person (0: one voice;
+  // NULL: not checked yet, VoiceManager.init() does it).
+  `
+  ALTER TABLE voice_samples ADD COLUMN mixed REAL;
+  `,
 ];
 
 function openDatabase(dataDir) {

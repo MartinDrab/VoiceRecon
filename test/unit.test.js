@@ -12,7 +12,7 @@ const { openDatabase, getSetting, setSetting } = require('../src/db');
 const { Auth, hashPassword, verifyPassword, parseCookies } = require('../src/auth');
 const { VoiceManager } = require('../src/voices');
 const { TranscriptionSession, splitWords, dropLead, sentenceLines, wordsOf } = require('../src/transcriber');
-const { SpeechEngine, l2normalize, spellable, analyze } = require('../src/speech/engine');
+const { SpeechEngine, l2normalize, spellable, analyze, otherVoiceShare } = require('../src/speech/engine');
 const { readHeader, titleFromName } = require('../src/uploads');
 
 // Data folders of the tests, deleted when they are done (each test closes its databases).
@@ -401,6 +401,16 @@ test('a line joins an unknown speaker at the join similarity, not at the stricte
   assert.notStrictEqual(strict.assignSpeaker(audio, at(0.55)).id, s1.id);
 });
 
+test('a recording with a second person in it is noticed, with how much of it is the other one', () => {
+  const piece = (x, y, weight = 1) => ({ embedding: l2normalize(Float32Array.of(x, y, 0.2)), weight });
+  const one = [piece(1, 0.1), piece(1, 0.2), piece(1, 0.05), piece(0.9, 0.3)];
+  assert.strictEqual(otherVoiceShare(one), 0, 'one person');
+  assert.strictEqual(otherVoiceShare([piece(1, 0.1)]), 0, 'too short to tell');
+  const two = [piece(1, 0.1), piece(1, 0.2), piece(1, 0.05), piece(0.1, 1)];
+  assert.strictEqual(otherVoiceShare(two), 0.25, 'a quarter of it is someone else');
+  assert.strictEqual(otherVoiceShare([...one, piece(0.1, 1, 0.3)]), 0, 'a few seconds of someone else are not worth a warning');
+});
+
 test('a recording is decoded, measured, voice-printed and re-encoded in one step (the job of the worker)', () => {
   const calls = [];
   const engine = {
@@ -409,14 +419,14 @@ test('a recording is decoded, measured, voice-printed and re-encoded in one step
       return samples;
     },
     speechOnly: (audio) => audio.subarray(0, 8000), // half a second of "speech"
-    embedLong: (speech) => Float32Array.of(speech.length),
+    embedChunks: (speech) => [{ embedding: Float32Array.of(0, speech.length), weight: speech.length }],
   };
   const samples = Float32Array.from({ length: 16000 }, (_, i) => Math.sin(i / 20) / 2);
   const r = analyze(/** @type {any} */ (engine), { wav: encodeWav(samples, 16000), keepWav: true });
-  assert.deepStrictEqual([r.duration, r.speechSeconds, [...r.embedding]], [1, 0.5, [8000]]);
+  assert.deepStrictEqual([r.duration, r.speechSeconds, [...r.embedding], r.mixed], [1, 0.5, [0, 1], 0]);
   assert.strictEqual(decodeWav(Buffer.from(r.wav)).samples.length, 16000, 'the stored file has the whole recording');
   assert.ok(r.wav.byteOffset === 0 && r.wav.byteLength === r.wav.buffer.byteLength, 'its own buffer, so it can be handed over');
-  const silent = analyze(/** @type {any} */ ({ ...engine, speechOnly: () => new Float32Array(0) }), { samples, sampleRate: 48000 });
+  const silent = analyze(/** @type {any} */ ({ ...engine, speechOnly: () => new Float32Array(0), embedChunks: () => [] }), { samples, sampleRate: 48000 });
   assert.deepStrictEqual([silent.embedding, silent.wav], [null, null]);
   assert.deepStrictEqual(calls, ['resample 16000', 'resample 48000']);
   assert.throws(() => analyze(/** @type {any} */ (engine), { wav: Buffer.from('not a wav file') }), /Not a WAV file/);
@@ -492,7 +502,9 @@ test('a saved threshold counts only for the speaker model it was set with', () =
   db.prepare(`INSERT INTO voice_samples (voice_id, file, label, duration, speech_duration, embedding, model)
     VALUES (1, '1/a.wav', '', 1, 1, ?, 'old')`).run(Buffer.alloc(12));
   setSetting(db, 'speakerThreshold', 0.45); // saved before thresholds named their model
-  const engine = (model) => ({ ready: true, speakerModelName: model, speechOnly: (s) => s, embedLong: () => l2normalize(Float32Array.of(1, 0, 0)) });
+  const engine = (model) => ({
+    ready: true, speakerModelName: model, speechOnly: (s) => s, embedChunks: () => [{ embedding: l2normalize(Float32Array.of(1, 0, 0)), weight: 1 }],
+  });
   const manager = (model) => new VoiceManager(db, engine(model), { dataDir, defaultThreshold: 0.6 });
 
   assert.strictEqual(manager('old').threshold, 0.45, 'an older threshold counts for the model of the recordings');

@@ -8,7 +8,6 @@ const { pipeline } = require('stream/promises');
 const { HttpError } = require('./errors');
 const { int16ToFloat } = require('./audio');
 const { TranscriptionSession } = require('./transcriber');
-const { regroupSpeakers } = require('./regroup');
 const { SAMPLE_RATE } = require('./speech/engine');
 
 const BYTES_PER_SECOND = SAMPLE_RATE * 2; // 16 kHz mono 16-bit
@@ -142,7 +141,7 @@ class UploadQueue {
         resolveDone = resolve;
       });
       this.waiting.push({
-        id: transcript.id, file, dataStart, dataBytes, startedAt: start, offset, status, cancelled: false, done, resolveDone, lines: [],
+        id: transcript.id, file, dataStart, dataBytes, startedAt: start, offset, status, cancelled: false, done, resolveDone,
       });
       this.transcripts.processing.set(transcript.id, status);
       this.transcripts.setRecording(transcript.id, true);
@@ -250,7 +249,7 @@ class UploadQueue {
     const recent = session.recent.get(m.id) || {};
     const speaker = this.transcripts.speakerFields(m.speaker, 1);
     try {
-      const lineId = this.transcripts.appendLine(job.id, {
+      this.transcripts.appendLine(job.id, {
         start: m.start + job.offset,
         end: m.end + job.offset,
         spokenAt: job.startedAt + Math.round((m.start + job.offset) * 1000),
@@ -260,7 +259,6 @@ class UploadQueue {
         embedding: recent.embedding,
         model: this.engine.speakerModelName,
       });
-      job.lines.push({ lineId, key: speaker.key, speaker: m.speaker, embedding: recent.embedding, seconds: recent.seconds });
     } catch (err) {
       // Most likely the transcript was deleted meanwhile: there is nothing left to fill.
       console.warn(`Transcript ${job.id}: ${err.message}; stopping its file transcription.`);
@@ -273,15 +271,8 @@ class UploadQueue {
    * that a user moved to another speaker meanwhile stays where it is.
    */
   regroup(job) {
-    if (!job.lines.length) return;
     try {
-      const after = regroupSpeakers(job.lines, this.voices);
-      const changes = [];
-      job.lines.forEach((l, i) => {
-        const to = this.transcripts.speakerFields(after[i], 1);
-        if (to.key !== l.key) changes.push({ lineId: l.lineId, from: l.key, to });
-      });
-      if (changes.length) this.transcripts.moveLines(job.id, changes);
+      this.transcripts.regroup(job.id, this.engine.speakerModelName);
     } catch (err) {
       console.warn(`Transcript ${job.id}: deciding its speakers per recording failed: ${err.message}`);
     }

@@ -297,6 +297,8 @@ dialog .buttons { display: flex; justify-content: flex-end; gap: 0.5rem; margin-
   font-size: 0.86rem;
 }
 .samples li .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.samples li { flex-wrap: wrap; }
+.sample-warning { flex-basis: 100%; padding-left: 2.4rem; color: var(--warn); font-size: 0.8rem; }
 .voice-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: auto; }
 .empty-state { text-align: center; padding: 3rem 1rem; color: var(--muted); }
 

@@ -92,6 +92,7 @@ function renderHeader() {
   $('export-wav').href = `/api/transcripts/${tid}/audio?download=1`;
   $('export-wav').classList.toggle('hidden', !transcript.audio);
   $('delete-audio').classList.toggle('hidden', !(transcript.audio && mayDelete()));
+  $('regroup').classList.toggle('hidden', isLive());
   $('delete').classList.toggle('hidden', !mayDelete());
   $('stop').classList.toggle('hidden', !(isProcessing() && mayDelete()));
   if (query) $('back').href = `/history?q=${encodeURIComponent(query)}`;
@@ -307,6 +308,15 @@ $('stop').addEventListener('click', async () => {
   stopping = false;
 });
 $('refresh').addEventListener('click', () => load().catch((err) => toast(err.message, { error: true })));
+$('regroup').addEventListener('click', async () => {
+  try {
+    const { moved } = await api(`/transcripts/${tid}/regroup`, { method: 'POST' });
+    await load();
+    toast(moved ? plural(moved, '{n} line has another speaker now.', '{n} lines have another speaker now.') : t('Every line keeps its speaker.'));
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
+});
 $('delete-audio').addEventListener('click', async () => {
   if (!confirm(t('Delete the audio of this transcript? Its text stays.'))) return;
   try {

@@ -1,6 +1,7 @@
 'use strict';
 
 const { HttpError } = require('./errors');
+const { regroupSpeakers } = require('./regroup');
 const { translate } = require('./i18n');
 const { meanEmbedding, embeddingToBlob, embeddingFromBlob } = require('./speech/engine');
 
@@ -165,10 +166,38 @@ class TranscriptStore {
     }
     const rows = this.db.prepare(`SELECT * FROM transcript_lines WHERE ${where}`).all(...params);
     if (!rows.length) throw new HttpError(404, 'Line not found.');
-    this.db.prepare(`UPDATE transcript_lines SET voice_id = ?, speaker_key = ?, speaker_label = ? WHERE ${where}`)
+    this.db.prepare(`UPDATE transcript_lines SET voice_id = ?, speaker_key = ?, speaker_label = ?, speaker_manual = 1 WHERE ${where}`)
       .run(s.voiceId, s.key, s.label, ...params);
     this.touch(transcriptId);
     return rows;
+  }
+
+  /**
+   * Decides the transcript's speakers again per speaker (regroup.js), from the voice prints saved
+   * with its lines: run when a file is transcribed or a live session ends, or from History. Lines
+   * whose speaker a user chose (or typed), and the speakers of voices deleted since, stay; lines
+   * without a print of the current speaker model follow their speaker. Returns how many lines moved.
+   * @param {number} transcriptId
+   * @param {string} model the current speaker model (prints of another are not comparable)
+   */
+  regroup(transcriptId, model) {
+    this.get(transcriptId);
+    const rows = this.db.prepare(`SELECT id, voice_id, speaker_key, speaker_label, seconds, embedding, model, speaker_manual
+      FROM transcript_lines WHERE transcript_id = ? ORDER BY start_sec, id`).all(transcriptId)
+      .filter((r) => !r.speaker_manual && (r.voice_id !== null || r.speaker_key.startsWith('u:')));
+    const lines = rows.map((r) => ({
+      embedding: r.embedding && r.model === model ? embeddingFromBlob(r.embedding) : null,
+      seconds: r.seconds,
+      speaker: r.voice_id !== null ? { kind: 'voice', id: r.voice_id } : { kind: 'unknown', id: r.speaker_key, label: r.speaker_label },
+    }));
+    const after = regroupSpeakers(lines, this.voices);
+    const changes = [];
+    rows.forEach((r, i) => {
+      // Unknown speakers of the whole transcript, apart from those of later live sessions (1, 2, ...).
+      const to = this.speakerFields(after[i], 0);
+      if (to.key !== r.speaker_key) changes.push({ lineId: r.id, from: r.speaker_key, to });
+    });
+    return changes.length ? this.moveLines(transcriptId, changes) : 0;
   }
 
   /**
@@ -180,7 +209,7 @@ class TranscriptStore {
    */
   moveLines(transcriptId, changes) {
     const update = this.db.prepare(`UPDATE transcript_lines SET voice_id = ?, speaker_key = ?, speaker_label = ?
-      WHERE transcript_id = ? AND id = ? AND speaker_key = ?`);
+      WHERE transcript_id = ? AND id = ? AND speaker_key = ? AND speaker_manual = 0`);
     let moved = 0;
     this.db.exec('BEGIN');
     try {

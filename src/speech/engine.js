@@ -12,6 +12,10 @@ const SAMPLE_RATE = 16000;
 const VAD_WINDOW = 512; // samples per Silero VAD step at 16 kHz
 const MIN_EMBED_SECONDS = 0.6;
 const EMBED_CHUNK_SECONDS = 6;
+// The two halves of one person's recording (6 s voice prints split in two groups) scored 0.84-0.95
+// against each other on the enrolled voices; two people mixed 70/30 or 50/50 scored 0.09-0.50.
+const MIX_SIMILARITY = 0.6;
+const MIX_MIN_SHARE = 0.1;
 const EMPTY_RESULT = { text: '', lang: '', tokens: [], timestamps: [], durations: [] };
 // Names and terms (hotwords) need beam search; 4 paths cost about 20-40% more decoding time.
 const BEAM_PATHS = 4;
@@ -275,8 +279,8 @@ class SpeechEngine {
     return l2normalize(Float32Array.from(this.extractor.compute(stream, false)));
   }
 
-  /** Embedding of a longer recording: averaged over chunks so long samples stay cheap and robust. */
-  embedLong(samples) {
+  /** Voice prints of a longer recording in equal pieces of about EMBED_CHUNK_SECONDS: [{ embedding, weight }]. */
+  embedChunks(samples) {
     const n = Math.max(1, Math.round(samples.length / (EMBED_CHUNK_SECONDS * SAMPLE_RATE)));
     const size = Math.ceil(samples.length / n);
     const items = [];
@@ -285,7 +289,12 @@ class SpeechEngine {
       const embedding = this.embed(piece);
       if (embedding) items.push({ embedding, weight: piece.length });
     }
-    return meanEmbedding(items);
+    return items;
+  }
+
+  /** Embedding of a longer recording: averaged over chunks so long samples stay cheap and robust. */
+  embedLong(samples) {
+    return meanEmbedding(this.embedChunks(samples));
   }
 
   /**
@@ -380,16 +389,53 @@ function analyze(engine, { wav, samples, sampleRate, keepWav = false }) {
   const audio = engine.resample(input.samples, input.sampleRate);
   const speech = engine.speechOnly(audio);
   const encoded = keepWav ? encodeWav(audio, SAMPLE_RATE) : null;
+  const chunks = speech.length ? engine.embedChunks(speech) : [];
   return {
     duration: audio.length / SAMPLE_RATE,
     speechSeconds: speech.length / SAMPLE_RATE,
-    embedding: speech.length ? engine.embedLong(speech) : null,
+    embedding: meanEmbedding(chunks),
+    mixed: otherVoiceShare(chunks),
     // A view of its own buffer, so the worker can hand it over without a copy.
     wav: encoded && new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength),
   };
 }
 
+/**
+ * How much of a recording sounds like a second person: its voice prints of about 6 s are split in
+ * the two groups that sound least alike (2-means); when the groups' averages are less similar than
+ * MIX_SIMILARITY, the smaller group's share of the speech (0..0.5), else 0.
+ * @param {{ embedding: Float32Array, weight: number }[]} chunks
+ */
+function otherVoiceShare(chunks) {
+  if (chunks.length < 2) return 0;
+  // Start from the two pieces least alike.
+  let a = 0;
+  let b = 1;
+  let low = Infinity;
+  for (let i = 0; i < chunks.length; i++) {
+    for (let j = i + 1; j < chunks.length; j++) {
+      const s = cosine(chunks[i].embedding, chunks[j].embedding);
+      if (s < low) [low, a, b] = [s, i, j];
+    }
+  }
+  let ca = chunks[a].embedding;
+  let cb = chunks[b].embedding;
+  let inA = [];
+  for (let round = 0; round < 10; round++) {
+    inA = chunks.map((c) => cosine(c.embedding, ca) >= cosine(c.embedding, cb));
+    const groupA = chunks.filter((_, i) => inA[i]);
+    const groupB = chunks.filter((_, i) => !inA[i]);
+    if (!groupA.length || !groupB.length) return 0;
+    ca = meanEmbedding(groupA);
+    cb = meanEmbedding(groupB);
+  }
+  const total = chunks.reduce((n, c) => n + c.weight, 0);
+  const weightA = chunks.reduce((n, c, i) => n + (inA[i] ? c.weight : 0), 0);
+  const smaller = Math.min(weightA, total - weightA) / total;
+  return cosine(ca, cb) < MIX_SIMILARITY && smaller >= MIX_MIN_SHARE ? smaller : 0;
+}
+
 module.exports = {
   SpeechEngine, SAMPLE_RATE, VAD_WINDOW, l2normalize, cosine, meanEmbedding, embeddingToBlob, embeddingFromBlob, spellable, analyze,
-  yieldToEventLoop,
+  yieldToEventLoop, otherVoiceShare,
 };

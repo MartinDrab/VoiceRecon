@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { HttpError } = require('./errors');
 const { decodeWav } = require('./audio');
-const { cosine, meanEmbedding, embeddingToBlob: toBlob, embeddingFromBlob: fromBlob } = require('./speech/engine');
+const { cosine, meanEmbedding, embeddingToBlob: toBlob, embeddingFromBlob: fromBlob, otherVoiceShare } = require('./speech/engine');
 const { getSetting, setSetting } = require('./db');
 
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
@@ -29,6 +29,9 @@ const LEARN_MIN_LEAD = 0.15; // ... and beat the second-best voice by this much
 const CORRECTION_MIN_SECONDS = 1.0;
 const MAX_LEARNED = { live: 30, correction: 30 }; // per voice; the oldest are dropped first
 const MIN_LIVE_FOR_PRINT = 3; // live lines needed before they count (corrections count at once)
+// A recording less similar than this to the voice's other recordings is most likely someone else (one
+// person's recordings from different rooms and microphones still score far above it).
+const UNLIKE_SIMILARITY = 0.5;
 
 /**
  * The speaker model a match threshold saved on the Voices page was chosen with. One saved before
@@ -96,19 +99,22 @@ class VoiceManager extends EventEmitter {
           + `${this.defaultThreshold} until one is set on the Voices page.`);
       }
     }
-    const stale = this.db.prepare('SELECT * FROM voice_samples WHERE model <> ?').all(model);
+    // Recordings of another speaker model, and ones not yet checked for a second voice.
+    const stale = this.db.prepare('SELECT * FROM voice_samples WHERE model <> ? OR mixed IS NULL').all(model);
     for (const s of stale) {
       try {
         const { samples } = decodeWav(fs.readFileSync(path.join(this.recordingsDir, s.file)));
-        const embedding = this.engine.embedLong(this.engine.speechOnly(samples));
+        const chunks = this.engine.embedChunks(this.engine.speechOnly(samples));
+        const embedding = meanEmbedding(chunks);
         if (embedding) {
-          this.db.prepare('UPDATE voice_samples SET embedding = ?, model = ? WHERE id = ?').run(toBlob(embedding), model, s.id);
+          this.db.prepare('UPDATE voice_samples SET embedding = ?, model = ?, mixed = ? WHERE id = ?')
+            .run(toBlob(embedding), model, otherVoiceShare(chunks), s.id);
         }
       } catch (err) {
         console.warn(`Could not re-embed voice sample ${s.id}: ${err.message}`);
       }
     }
-    if (stale.length) console.log(`Re-computed ${stale.length} voice embedding(s) for model ${model}.`);
+    if (stale.length) console.log(`Checked ${stale.length} voice recording(s) with model ${model}.`);
     // Learned prints have no audio to recompute them from; they are relearned with the new model.
     this.db.prepare('DELETE FROM voice_learned WHERE model <> ?').run(model);
     for (const { id } of this.db.prepare('SELECT id FROM voices').all()) this.refreshPrints(id);
@@ -182,17 +188,20 @@ class VoiceManager extends EventEmitter {
   list() {
     const voices = this.db.prepare('SELECT * FROM voices ORDER BY name COLLATE NOCASE').all();
     const samples = this.db.prepare(
-      'SELECT id, voice_id, label, duration, speech_duration, created_at FROM voice_samples ORDER BY id',
+      'SELECT id, voice_id, label, duration, speech_duration, created_at, embedding, mixed FROM voice_samples ORDER BY id',
     ).all();
+    const names = new Map(voices.map((v) => [v.id, v.name]));
     const learned = this.db.prepare('SELECT voice_id, source, COUNT(*) AS n FROM voice_learned GROUP BY voice_id, source').all();
     const learnedCount = (voiceId, source) => (learned.find((l) => l.voice_id === voiceId && l.source === source) || { n: 0 }).n;
     return voices.map((v) => {
-      const own = samples.filter((s) => s.voice_id === v.id).map((s) => ({
+      const rows = samples.filter((s) => s.voice_id === v.id);
+      const own = rows.map((s) => ({
         id: s.id,
         label: s.label,
         duration: s.duration,
         speechDuration: s.speech_duration,
         createdAt: s.created_at,
+        warnings: this.sampleWarnings(s, rows, names),
       }));
       return {
         id: v.id,
@@ -204,6 +213,33 @@ class VoiceManager extends EventEmitter {
         learned: { live: learnedCount(v.id, 'live'), correction: learnedCount(v.id, 'correction') },
       };
     });
+  }
+
+  /**
+   * What may be wrong with a voice's recording: [{ type: 'mixed', share } | { type: 'like', name,
+   * score } | { type: 'unlike', score }]. A recording that holds a second person, sounds like
+   * another saved voice, or unlike this voice's other recordings makes the voice match the wrong
+   * people (a real recording of one person was another person's voice: 0.82 alike).
+   */
+  sampleWarnings(sample, voiceRows, names) {
+    const out = [];
+    if (sample.mixed >= 0.1) out.push({ type: 'mixed', share: Math.round(sample.mixed * 100) / 100 });
+    if (!sample.embedding) return out;
+    const e = fromBlob(sample.embedding);
+    let like = null;
+    for (const [voiceId, p] of this.prints) {
+      if (voiceId === sample.voice_id || !names.has(voiceId)) continue;
+      const score = cosine(e, p.enrolled[0]);
+      if (score >= this.threshold && (!like || score > like.score)) like = { type: 'like', name: names.get(voiceId), score: Math.round(score * 100) / 100 };
+    }
+    if (like) out.push(like);
+    const others = voiceRows.filter((r) => r.id !== sample.id && r.embedding);
+    if (others.length) {
+      const rest = meanEmbedding(others.map((r) => ({ embedding: fromBlob(r.embedding), weight: Math.min(r.speech_duration, 60) })));
+      const score = cosine(e, rest);
+      if (score < UNLIKE_SIMILARITY) out.push({ type: 'unlike', score: Math.round(score * 100) / 100 });
+    }
+    return out;
   }
 
   /** Short form for transcript clients. */
@@ -275,8 +311,8 @@ class VoiceManager extends EventEmitter {
     fs.mkdirSync(path.join(this.recordingsDir, String(voiceId)), { recursive: true });
     fs.writeFileSync(path.join(this.recordingsDir, file), r.wav);
     const { lastInsertRowid } = this.db.prepare(
-      'INSERT INTO voice_samples (voice_id, file, label, duration, speech_duration, embedding, model) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(voiceId, file, String(label).slice(0, 120), duration, speechDuration, toBlob(embedding), this.engine.speakerModelName);
+      'INSERT INTO voice_samples (voice_id, file, label, duration, speech_duration, embedding, model, mixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(voiceId, file, String(label).slice(0, 120), duration, speechDuration, toBlob(embedding), this.engine.speakerModelName, r.mixed || 0);
     this.refreshPrints(voiceId);
     this.emit('changed');
     return { id: Number(lastInsertRowid), duration, speechDuration };

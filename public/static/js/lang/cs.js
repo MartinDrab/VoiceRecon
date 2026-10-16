@@ -311,6 +311,23 @@ export default {
   'Password changed. Other sessions were signed out.': 'Heslo bylo změněno. Ostatní přihlášení byla ukončena.',
   'Password changed. {username} was signed out everywhere.': 'Heslo bylo změněno. Uživatel {username} byl všude odhlášen.',
 
+  // checking voice recordings
+  'Only {duration} of speech: 30–60 seconds make this voice much more reliable.': 'Jen {duration} řeči: 30–60 sekund tento hlas výrazně zpřesní.',
+  'About {share} of it sounds like another person. A recording should hold only {name}.':
+    'Asi {share} zní jako jiný člověk. Nahrávka má obsahovat jen hlas: {name}.',
+  'It sounds like {other} ({score}): is it really {name}?': 'Zní jako {other} ({score}): je to opravdu {name}?',
+  'It sounds unlike the other recordings of {name} ({score}): is it the same person?':
+    'Nezní jako ostatní nahrávky hlasu {name} ({score}): je to stejný člověk?',
+
+  // deciding speakers again
+  'Re-check speakers': 'Znovu určit mluvčí',
+  'Decide who spoke again from all the lines of each speaker together, e.g. after enrolling someone. Speakers you chose stay.':
+    'Znovu určí, kdo mluvil, ze všech řádků každého mluvčího dohromady, např. po přidání něčího hlasu. Mluvčí, které jste vybrali, zůstanou.',
+  '{n} line has another speaker now.|{n} lines have another speaker now.': {
+    one: '{n} řádek má teď jiného mluvčího.', few: '{n} řádky mají teď jiného mluvčího.', other: '{n} řádků má teď jiného mluvčího.',
+  },
+  'Every line keeps its speaker.': 'Všechny řádky si ponechaly mluvčího.',
+
   // audio of transcripts
   'The audio of the whole transcript': 'Zvuk celého přepisu',
   'Delete audio': 'Smazat zvuk',

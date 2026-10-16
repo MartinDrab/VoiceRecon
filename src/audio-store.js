@@ -201,13 +201,12 @@ class AudioStore {
   }
 
   /**
-   * Writes the transcript's audio from `from` to `to` seconds (default: all of it) to an HTTP
-   * response as a WAV file, with silence where no piece covers the time.
-   * @param {import('express').Response} res
+   * The transcript's audio from `from` to `to` seconds (default: all of it) as a WAV file, with
+   * silence where no piece covers the time: { bytes, stream }.
    * @param {number} transcriptId
-   * @param {{ from?: number, to?: number, filename?: string }} [options] filename: save as this file
+   * @param {{ from?: number, to?: number }} [range]
    */
-  async send(res, transcriptId, { from, to, filename } = {}) {
+  wav(transcriptId, { from, to } = {}) {
     const pieces = this.pieces(transcriptId);
     if (!pieces.length) throw new HttpError(404, 'This transcript has no audio.');
     const first = Math.round((from ?? Math.min(...pieces.map((p) => p.start))) * SAMPLE_RATE);
@@ -231,6 +230,7 @@ class AudioStore {
     if (at < last) parts.push({ silence: last - at });
 
     async function* samples() {
+      yield wavHeader(2 * total);
       for (const part of parts) {
         if (part.silence) {
           for (let left = part.silence * 2; left > 0; left -= SILENCE.length) yield SILENCE.subarray(0, Math.min(left, SILENCE.length));
@@ -239,15 +239,25 @@ class AudioStore {
         }
       }
     }
+    return { bytes: 44 + 2 * total, stream: Readable.from(samples()) };
+  }
+
+  /**
+   * Sends the transcript's audio (wav()) as an HTTP response.
+   * @param {import('express').Response} res
+   * @param {number} transcriptId
+   * @param {{ from?: number, to?: number, filename?: string }} [options] filename: save as this file
+   */
+  async send(res, transcriptId, { from, to, filename } = {}) {
+    const { bytes, stream } = this.wav(transcriptId, { from, to });
     res.set({
       'Content-Type': 'audio/wav',
-      'Content-Length': String(44 + 2 * total),
+      'Content-Length': String(bytes),
       'Cache-Control': 'no-store',
       ...(filename ? { 'Content-Disposition': `attachment; filename="${filename}"` } : {}),
     });
-    res.write(wavHeader(2 * total));
     try {
-      await pipeline(Readable.from(samples()), res);
+      await pipeline(stream, res);
     } catch (err) {
       // The browser stops a line's audio when another one is played: nothing to report then.
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.warn(`Sending the audio of transcript ${transcriptId} failed:`, err.message);

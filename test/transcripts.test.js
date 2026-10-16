@@ -131,6 +131,32 @@ test('lines are moved to other speakers only if no one moved them meanwhile', ()
   db.close();
 });
 
+test('speakers of a saved transcript are decided again; speakers a user chose stay', () => {
+  const { db, voices, store, jirka } = setup();
+  const t = store.create(1);
+  const line = (start, speaker, embedding, model = 'm') => store.appendLine(t.id, {
+    start, end: start + 3, spokenAt: Date.now(), speaker, text: `Řádek ${start}.`, seconds: 3, embedding, model,
+  });
+  const u = (session, n) => ({ voiceId: null, key: `u:${session}:u${n}`, label: `Speaker ${n}` });
+  // One guest, "Speaker 1" in two live sessions; another person; a line from an older speaker model.
+  const a = line(0, u(1, 1), emb(0, 1, 0));
+  line(4, u(1, 1), emb(0, 1, 0.1));
+  const b = line(8, u(2, 1), emb(0, 1, 0.05));
+  line(12, u(2, 2), emb(0, 0, 1));
+  const old = line(16, u(2, 2), emb(0, 1, 0), 'older model');
+  const moved = line(20, u(1, 1), emb(0, 1, 0));
+  store.setSpeaker(t.id, { lineIds: [moved] }, { voiceId: jirka }); // a user said this one is Jirka
+  voices.prints.clear(); // no saved voice is similar here
+
+  assert.strictEqual(store.regroup(t.id, 'm'), 5);
+  const speakers = store.lines(t.id).map((l) => l.speaker.name);
+  assert.deepStrictEqual(speakers, ['Speaker 1', 'Speaker 1', 'Speaker 1', 'Speaker 2', 'Speaker 2', 'Jirka']);
+  assert.strictEqual(store.lines(t.id).find((l) => l.id === old).speaker.key, 'u:0:u2', 'follows its speaker');
+  assert.strictEqual(store.lines(t.id).find((l) => l.id === a).speaker.key, store.lines(t.id).find((l) => l.id === b).speaker.key);
+  assert.strictEqual(store.regroup(t.id, 'm'), 0, 'nothing more to move');
+  db.close();
+});
+
 test('editing, moving and deleting lines keeps search up to date', () => {
   const { db, voices, store, jirka, klara } = setup();
   const t = store.create(1);

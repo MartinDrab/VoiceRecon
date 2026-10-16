@@ -15,9 +15,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const WebSocket = require('ws');
 const config = require('../src/config');
+const { parseReference } = require('../src/evaluation');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 // Skipped without models and test audio, unless VOICERECON_REQUIRE_MODELS=1 (nightly CI): then it fails.
@@ -217,6 +218,14 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.strictEqual(await within(announced, 'the resumed transcript'), transcriptId);
     ws2.close();
 
+    // its speakers were decided per speaker when the session ended; again from History, nothing moves
+    for (let i = 0; i < 50 && (await call('GET', `/api/transcripts/${transcriptId}?lines=0`)).transcript.recording; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.deepStrictEqual(await call('POST', `/api/transcripts/${transcriptId}/regroup`), { moved: 0 });
+    assert.deepStrictEqual((await call('GET', `/api/transcripts/${transcriptId}`)).lines.map((l) => l.speaker.voiceId),
+      saved.lines.map((l) => l.speaker.voiceId), 'enrolled speakers and the correction stay');
+
     // editing in History: move a line to a typed name, fix its text, then delete the transcript
     await call('POST', `/api/transcripts/${transcriptId}/speaker`, { lineIds: [saved.lines[1].id], speaker: { label: 'Host' } });
     await call('PATCH', `/api/transcripts/${transcriptId}/lines/${saved.lines[1].id}`, { text: 'Opravený text.' });
@@ -275,6 +284,15 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     const whole = await fetch(`${base}/api/transcripts/${fileId}/audio?download=1`, { headers: { cookie } });
     assert.match(whole.headers.get('content-disposition'), /^attachment; filename="transcript-\d+-[\d-]+\.wav"$/);
     assert.strictEqual((await whole.arrayBuffer()).byteLength, recording.length, 'the whole recording, from the part\'s start');
+    // ... and becomes a test case for npm run evaluate, as corrected in History
+    const caseDir = path.join(dataDir, 'test-case');
+    execFileSync(process.execPath, [path.join(config.root, 'scripts', 'export-test.js'), String(fileId), caseDir],
+      { env: { ...process.env, DATA_DIR: dataDir }, stdio: 'pipe' });
+    const reference = parseReference(fs.readFileSync(path.join(caseDir, 'reference.txt'), 'utf8'));
+    const turnsOf = (speakers) => speakers.filter((name, i) => name !== speakers[i - 1]);
+    assert.deepStrictEqual(reference.map((r) => r.speaker), turnsOf(expected.map((e) => e.voice)));
+    assert.strictEqual(fs.statSync(path.join(caseDir, 'conversation.wav')).size, recording.length);
+    assert.deepStrictEqual(fs.readdirSync(path.join(caseDir, 'voices')).sort(), ['coqui', 'jirka']);
     assert.deepStrictEqual(await call('DELETE', `/api/transcripts/${fileId}/audio`), { deleted: true });
     assert.strictEqual((await call('GET', `/api/transcripts/${fileId}`)).transcript.audio, false);
     assert.strictEqual((await fetch(`${base}/api/transcripts/${fileId}/audio`, { headers: { cookie } })).status, 404);

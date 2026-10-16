@@ -117,9 +117,19 @@ function attachWebSocket(server, { auth, engine, voices, transcripts, audio = nu
     };
 
     const setTranscript = (id) => {
-      transcripts.setRecording(live.transcriptId, false);
+      const previous = live.transcriptId;
+      transcripts.setRecording(previous, false);
       live.transcriptId = id;
       transcripts.setRecording(id, true);
+      // This connection is done with it: decide its speakers per speaker (regroup.js), unless
+      // another connection still writes to it.
+      if (previous && previous !== id && !transcripts.recording.has(previous)) {
+        try {
+          transcripts.regroup(previous, engine.speakerModelName);
+        } catch (err) {
+          if (err.status !== 404) console.error('Could not decide the speakers again:', err.message);
+        }
+      }
     };
 
     const attach = (transcriptId) => {

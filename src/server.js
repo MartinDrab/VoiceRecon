@@ -285,6 +285,13 @@ api.delete('/transcripts/:id/audio', user, (req, res) => {
   if (!t) throw new HttpError(403, 'Only the author or an administrator can delete this audio.');
   res.json({ deleted: audio.remove(t.id) });
 });
+// Decides the transcript's speakers again per speaker, e.g. after someone in it was enrolled.
+api.post('/transcripts/:id/regroup', user, (req, res) => {
+  const tid = id(req.params.id);
+  if (transcripts.recording.has(tid)) throw new HttpError(409, 'Wait until the transcript is finished.');
+  if (!engine.ready) throw new HttpError(503, 'Speech models are still loading. Try again in a moment.');
+  res.json({ moved: transcripts.regroup(tid, engine.speakerModelName) });
+});
 api.patch('/transcripts/:id/lines/:lineId', user, json, (req, res) => {
   transcripts.updateText(id(req.params.id), id(req.params.lineId), req.body.text);
   res.json({ ok: true });

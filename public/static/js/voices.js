@@ -1,5 +1,5 @@
 import {
-  api, h, icon, toast, initPage, formatDuration, nextColor, t, plural, locale, formatNumber,
+  api, h, icon, toast, initPage, formatDuration, nextColor, t, plural, locale, formatNumber, formatPercent,
 } from './common.js';
 import { MicRecorder } from './audio.js';
 import { chooseFileLength } from './file-length.js';
@@ -13,6 +13,7 @@ let player = null; // { audio, sampleId }
 let uploadTarget = null;
 let pollTimer = null;
 const MAX_RECORDING_SECONDS = 10 * 60; // as the server accepts (src/voices.js)
+const SHORT_SPEECH_SECONDS = 30;
 
 /** Recordings saved from the transcript page carry this label (in English, like all stored labels). */
 const sampleLabel = (label) => (label === 'From live transcript' ? t('From live transcript') : label);
@@ -67,6 +68,10 @@ function voiceCard(v) {
   const samples = v.samples.length
     ? h('ul.samples', {}, v.samples.map((s, i) => sampleRow(v, s, i)))
     : h('div.notice.warn.small', {}, t('Not recognizable yet: add a recording of this person speaking.'));
+  // 60 s of speech instead of 10 s gave about 40 % fewer wrong names in tests.
+  const short = v.samples.length && v.speechSeconds < SHORT_SPEECH_SECONDS
+    ? h('div.notice.warn.small', {}, t('Only {duration} of speech: 30–60 seconds make this voice much more reliable.', { duration: formatDuration(v.speechSeconds) }))
+    : null;
 
   return h('div.card.voice-card', { style: { '--c': v.color } },
     h('div.voice-head', {}, color, name),
@@ -75,6 +80,7 @@ function voiceCard(v) {
         { duration: formatDuration(v.speechSeconds) })
       : t('No recordings')),
     samples,
+    short,
     learnedInfo(v),
     h('div.voice-actions', {},
       h(`button.btn.btn-sm${recording ? '.recording' : ''}`, {
@@ -116,7 +122,19 @@ function sampleRow(v, s, i) {
     h('span.label', { title: sampleLabel(s.label) || '' },
       sampleLabel(s.label) || t('Recording {n}', { n: i + 1 }), h('span.muted', {}, ` · ${when.toLocaleDateString(locale)}`)),
     h('span.muted', { title: t('{duration} of speech', { duration: formatDuration(s.speechDuration) }) }, formatDuration(s.duration)),
-    h('button.btn.btn-ghost.btn-icon.btn-sm.btn-danger', { title: t('Delete recording'), onclick: () => removeSample(v, s) }, icon('trash')));
+    h('button.btn.btn-ghost.btn-icon.btn-sm.btn-danger', { title: t('Delete recording'), onclick: () => removeSample(v, s) }, icon('trash')),
+    (s.warnings || []).map((w) => h('span.sample-warning', {}, sampleWarning(v, w))));
+}
+
+/** What may be wrong with a recording (VoiceManager.sampleWarnings()). */
+function sampleWarning(v, w) {
+  if (w.type === 'mixed') {
+    return t('About {share} of it sounds like another person. A recording should hold only {name}.', { share: formatPercent(w.share), name: v.name });
+  }
+  if (w.type === 'like') {
+    return t('It sounds like {other} ({score}): is it really {name}?', { other: w.name, score: formatNumber(w.score, 2), name: v.name });
+  }
+  return t('It sounds unlike the other recordings of {name} ({score}): is it the same person?', { name: v.name, score: formatNumber(w.score, 2) });
 }
 
 // ---------- actions ----------
