@@ -49,6 +49,11 @@ function installDependencies() {
 function downloadModels(config) {
   const missing = config.modelFiles.filter((f) => !fs.existsSync(f));
   if (!missing.length) return;
+  try {
+    require('./download-models').checkSpeakerModel(); // a SPEAKER_MODEL that must be copied by hand
+  } catch (err) {
+    fail(err.message);
+  }
   const { encoder, encoderWeights } = config.asr;
   if (missing.every((f) => f === config.speakerModel)) {
     console.log('Downloading the more accurate speaker recognition model (27 MB, once)...');

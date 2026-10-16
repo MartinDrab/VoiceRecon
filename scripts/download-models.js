@@ -15,7 +15,9 @@ const { pipeline } = require('stream/promises');
 const config = require('../src/config');
 
 const BASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download';
-const FP32 = 'https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/main';
+// A fixed revision of the repository: the SHA-256 values below are of its files, so a later change
+// there cannot make every download fail its check.
+const FP32 = 'https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/1a468a35cbba69418f126de829e75261dea4a4e4';
 const PARAKEET = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
 
 const MODELS = [
@@ -150,7 +152,20 @@ async function fetchModel(m) {
   fs.rmSync(archive);
 }
 
+/**
+ * Throws when the speaker model is missing and cannot be downloaded: SPEAKER_MODEL may name any
+ * sherpa-onnx speaker model, but only the ones listed above are fetched (scripts/launch.js checks
+ * this too, before it starts a download).
+ */
+function checkSpeakerModel() {
+  const known = MODELS.some((m) => m.speaker && path.join(config.modelsDir, m.file) === config.speakerModel);
+  if (known || fs.existsSync(config.speakerModel)) return;
+  throw new Error(`The speaker model ${config.speakerModel} (SPEAKER_MODEL) is missing and cannot be downloaded `
+    + `automatically. Copy it there, or remove SPEAKER_MODEL to use the default speaker model.`);
+}
+
 async function main() {
+  checkSpeakerModel();
   fs.mkdirSync(config.modelsDir, { recursive: true });
   const list = (process.argv.includes('--test') ? [...MODELS, ...TEST_MODELS] : MODELS)
     .filter((m) => !m.speaker || path.join(config.modelsDir, m.file) === config.speakerModel);
@@ -158,7 +173,11 @@ async function main() {
   console.log(`Models are in ${config.modelsDir}`);
 }
 
-main().catch((err) => {
-  console.error(err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { checkSpeakerModel };

@@ -15,6 +15,9 @@ const PAD_AFTER = sec(0.3); // only after a real pause: the VAD waits for >= 0.3
 const TAIL_SILENCE = sec(0.3); // without it the recognizer sometimes drops the last words
 const PARTIAL_EVERY = sec(0.8);
 const MIN_PARTIAL = sec(1.2); // shorter snippets mostly produce guesses in the wrong language
+// Interim text shows who is speaking now: the voice print of the last seconds (one embed() call)
+// tells that, while one of the whole utterance so far would cost more with every interim result.
+const PARTIAL_VOICE = sec(6);
 // Alone, a short utterance is often taken for another language ("Ukrajincům" came out as
 // "Uh Ukraine Soom"), so it is recognized after the speech that preceded it (see recognize()).
 const SHORT_UTTERANCE = sec(2.5);
@@ -41,6 +44,14 @@ const CHANGE_MAX_SIMILARITY = 0.5;
 // threshold and this far ahead of the next voice), and a voice must hold for this many windows.
 const VOICE_MARGIN = 0.1;
 const VOICE_RUN = 1;
+// A line joins an unknown speaker of the session when it is at least this similar to that speaker's
+// average print. Not the match threshold for saved voices (0.6): that one keeps wrong names rare, but
+// an unknown speaker's print comes from a few short lines, so the same person scores lower against it
+// and a stricter threshold splits one guest into "Speaker 2", "Speaker 3", ... Both were 0.5 before
+// ResNet34-LM, whose scores are on CAM++'s scale with fewer high impostor scores. On the four enrolled
+// voices (none enrolled for the test, 1.5-5 s lines), grouping was clean from 0.4 to 0.6 and split
+// people from 0.65 on.
+const JOIN_SIMILARITY = 0.5;
 
 // Long stretches of one speaker are split into lines at sentence ends, each at least this long.
 const LINE_MIN_SECONDS = 3;
@@ -73,10 +84,11 @@ class TranscriptionSession extends EventEmitter {
    *   vad                  overrides for SpeechEngine.createVad(), e.g. { minSilence: 0.3 }
    *   changeMaxSimilarity  split an utterance when its halves are less similar than this
    *   splitMiddle          also cut out a middle stretch that sounds unlike the rest (A–B–A; default true)
+   *   joinSimilarity       join a line to an unknown speaker at this similarity (JOIN_SIMILARITY)
    */
   constructor(engine, voices, {
     interim = true, learn = true, background = false, vad = {}, changeMaxSimilarity = CHANGE_MAX_SIMILARITY,
-    splitMiddle = true,
+    splitMiddle = true, joinSimilarity = JOIN_SIMILARITY,
   } = {}) {
     super();
     this.engine = engine;
@@ -86,6 +98,7 @@ class TranscriptionSession extends EventEmitter {
     this.background = background;
     this.changeMaxSimilarity = changeMaxSimilarity;
     this.splitMiddle = splitMiddle;
+    this.joinSimilarity = joinSimilarity;
     this.vad = engine.createVad(vad);
     this.leftover = new Float32Array(0);
     this.history = [];
@@ -194,7 +207,8 @@ class TranscriptionSession extends EventEmitter {
     this.recognize(withTail(audio), audio.length < SHORT_UTTERANCE ? this.context : null, { interim: true, owner: this })
       .then(async (r) => {
         if (this.closed || this.speechStart === null || this.gen !== gen || !r.text) return;
-        const embedding = audio.length >= NEW_SPEAKER_MIN ? await this.engine.embedLine(audio) : null;
+        const recent = audio.subarray(Math.max(0, audio.length - PARTIAL_VOICE));
+        const embedding = audio.length >= NEW_SPEAKER_MIN ? await this.engine.embedLine(recent) : null;
         if (this.closed || this.speechStart === null || this.gen !== gen) return; // ended meanwhile
         const speaker = this.peekSpeaker(embedding);
         this.partialGen = gen;
@@ -241,7 +255,7 @@ class TranscriptionSession extends EventEmitter {
             const own = words ? parts[i] || [] : null; // null: no word times
             if (own ? !wordsText(own) : i > 0) continue;
             const part = core.subarray(t.start, t.end);
-            const embedding = await this.engine.embedLine(part);
+            const embedding = t.embedding || await this.engine.embedLine(part);
             if (this.closed) return;
             const speaker = this.assignSpeaker(part, embedding);
             const partStart = (coreStart + t.start) / SAMPLE_RATE;
@@ -319,8 +333,11 @@ class TranscriptionSession extends EventEmitter {
   /**
    * Splits an utterance where the voice changes (binary segmentation over sliding-window speaker
    * embeddings, with two cuts at once where one speaker talks before and after another). Returns
-   * [{ start, end }] in samples relative to the utterance. Each embedding takes ~25 ms of CPU, so
+   * [{ start, end, embedding? }] in samples relative to the utterance; embedding is the part's voice
+   * print from its windows, when it has whole windows of its own. Each embedding takes ~25 ms of CPU, so
    * the event loop is given a turn between them to keep audio flowing.
+   * @param {Float32Array} core
+   * @returns {Promise<{ start: number, end: number, embedding?: Float32Array }[]>}
    */
   async speakerTurns(core) {
     const whole = [{ start: 0, end: core.length }];
@@ -378,11 +395,19 @@ class TranscriptionSession extends EventEmitter {
       split(parts[i], parts[i + 1], 0);
     }
     cuts.sort((a, b) => a - b);
-    if (!cuts.length) return whole;
+    // Each part's voice print is the mean of the windows that lie wholly inside it, so the part needs
+    // no model call of its own (on one speaker's lines it matched as well as embedding the line again:
+    // 0.98 cosine to that print, the same margin to other voices). A part without such a window is
+    // left to the caller.
+    const print = (a, b) => (b > a ? mean(a, b) : undefined);
+    if (!cuts.length) return [{ ...whole[0], embedding: print(0, embs.length) }];
     // Boundary between windows k-1 and k: midway between their centres.
     const bounds = cuts.map((k) => k * CHANGE_HOP + (CHANGE_WIN - CHANGE_HOP) / 2);
     const edges = [0, ...bounds, core.length];
-    return edges.slice(1).map((end, i) => ({ start: edges[i], end }));
+    // Window j covers [j, j + 3) hops; the part after cut k starts 1 hop after window k starts.
+    const firstWindow = [0, ...cuts.map((k) => k + 1)];
+    const endWindow = [...cuts.map((k) => k - 1), embs.length];
+    return edges.slice(1).map((end, i) => ({ start: edges[i], end, embedding: print(firstWindow[i], endWindow[i]) }));
   }
 
   /**
@@ -421,7 +446,7 @@ class TranscriptionSession extends EventEmitter {
 
   bestUnknown(embedding) {
     let best = null;
-    let bestScore = this.voices.threshold;
+    let bestScore = this.joinSimilarity;
     for (const u of this.unknown) {
       const s = cosine(embedding, u.centroid);
       if (s >= bestScore) {
@@ -671,4 +696,4 @@ function sentenceLines(words) {
   return lines;
 }
 
-module.exports = { TranscriptionSession, splitWords, dropLead, sentenceLines, wordsOf, CHANGE_MAX_SIMILARITY };
+module.exports = { TranscriptionSession, splitWords, dropLead, sentenceLines, wordsOf, CHANGE_MAX_SIMILARITY, JOIN_SIMILARITY };

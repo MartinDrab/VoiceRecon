@@ -10,8 +10,15 @@ const { VoiceManager } = require('../src/voices');
 const { TranscriptStore, ftsTerms, srtTime } = require('../src/transcripts');
 const { l2normalize } = require('../src/speech/engine');
 
+// Data folders of the tests, deleted when they are done (each test closes its database).
+const folders = [];
+test.after(() => {
+  for (const dir of folders) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+});
+
 function setup() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-transcripts-'));
+  folders.push(dataDir);
   const db = openDatabase(dataDir);
   db.prepare("INSERT INTO users (username, password_hash, role) VALUES ('anna', 'x', 'admin'), ('ben', 'x', 'user')").run();
   const voices = new VoiceManager(db, { ready: true, speakerModelName: 'm' }, { dataDir, defaultThreshold: 0.5 });

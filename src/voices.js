@@ -32,11 +32,12 @@ const MIN_LIVE_FOR_PRINT = 3; // live lines needed before they count (correction
 
 /**
  * The speaker model a match threshold saved on the Voices page was chosen with. One saved before
- * that was recorded counts for the model of the recordings' voice prints.
+ * that was recorded counts for the model of the recordings' voice prints; without recordings its
+ * model is unknown (''), so it counts for none: it was most likely chosen for an earlier default.
  */
-function thresholdModel(db, model) {
+function thresholdModel(db) {
   const sample = db.prepare('SELECT model FROM voice_samples ORDER BY id LIMIT 1').get();
-  return getSetting(db, 'speakerThresholdModel', sample ? sample.model : model);
+  return getSetting(db, 'speakerThresholdModel', sample ? sample.model : '');
 }
 
 /**
@@ -46,7 +47,7 @@ function thresholdModel(db, model) {
  */
 function savedThreshold(db, model) {
   const value = getSetting(db, 'speakerThreshold', null);
-  return value !== null && thresholdModel(db, model) === model ? value : null;
+  return value !== null && thresholdModel(db) === model ? value : null;
 }
 
 function validateName(name) {
@@ -88,10 +89,11 @@ class VoiceManager extends EventEmitter {
     const saved = getSetting(this.db, 'speakerThreshold', null);
     if (saved !== null) {
       // Before the samples change model, which tells what an older saved threshold was chosen with.
-      const tunedFor = thresholdModel(this.db, model);
+      const tunedFor = thresholdModel(this.db);
       setSetting(this.db, 'speakerThresholdModel', tunedFor);
       if (tunedFor !== model) {
-        console.log(`The match threshold ${saved} was set for ${tunedFor}; ${model} uses ${this.defaultThreshold} until one is set on the Voices page.`);
+        console.log(`The match threshold ${saved} was set for ${tunedFor || 'an earlier speaker model'}; ${model} uses `
+          + `${this.defaultThreshold} until one is set on the Voices page.`);
       }
     }
     const stale = this.db.prepare('SELECT * FROM voice_samples WHERE model <> ?').all(model);

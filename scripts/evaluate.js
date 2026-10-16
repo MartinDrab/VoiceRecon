@@ -23,7 +23,7 @@ const { openDatabase, getSetting } = require('../src/db');
 const { decodeWav } = require('../src/audio');
 const { SpeechEngine, SAMPLE_RATE } = require('../src/speech/engine');
 const { VoiceManager, savedThreshold } = require('../src/voices');
-const { TranscriptionSession, CHANGE_MAX_SIMILARITY } = require('../src/transcriber');
+const { TranscriptionSession, CHANGE_MAX_SIMILARITY, JOIN_SIMILARITY } = require('../src/transcriber');
 const { parseReference, score, formatDetails } = require('../src/evaluation');
 
 const USAGE = `Usage: npm run evaluate -- <dataset folder> [options]
@@ -40,6 +40,7 @@ Options:
   --min-silence <list>         seconds of silence that end an utterance, e.g. 0.25,0.35,0.5
   --change-similarity <list>   similarity below which an utterance is split between speakers
   --split-middle <list>        cut out a stretch of someone else in the middle (A–B–A): 0 = off, 1 = on
+  --join-similarity <list>     similarity at which a line joins an unknown speaker, e.g. 0.4,0.5,0.6
   --learn <list>               learn from clearly recognized lines during the run: 0 = off, 1 = on
   --details <file>             write word-by-word differences of the best run
   --json <file>                write all results as JSON`;
@@ -66,6 +67,7 @@ function parseArgs(argv) {
     else if (a === '--min-silence') opts.lists.minSilence = list(value(), a);
     else if (a === '--change-similarity') opts.lists.changeSimilarity = list(value(), a);
     else if (a === '--split-middle') opts.lists.splitMiddle = list(value(), a);
+    else if (a === '--join-similarity') opts.lists.joinSimilarity = list(value(), a);
     else if (a === '--learn') opts.lists.learn = list(value(), a);
     else if (a === '--details') opts.details = value();
     else if (a === '--json') opts.json = value();
@@ -158,6 +160,7 @@ async function runOnce(engine, voices, audio, params) {
     vad: { minSilence: params.minSilence },
     changeMaxSimilarity: params.changeSimilarity,
     splitMiddle: Boolean(params.splitMiddle),
+    joinSimilarity: params.joinSimilarity,
   });
   const names = new Map(voices.summary().map((v) => [v.id, v.name]));
   const lines = [];
@@ -271,11 +274,12 @@ async function main() {
       minSilence: 0.35,
       changeSimilarity: CHANGE_MAX_SIMILARITY,
       splitMiddle: 1,
+      joinSimilarity: JOIN_SIMILARITY,
       learn: app && app.learnFromSpeech ? 1 : 0,
     };
     const combos = product(opts.lists).map((c) => ({ ...defaults, ...c }));
     const runs = [];
-    console.log('\n  threshold  min-silence  change-sim  middle  learn |    WER  WER (no accents) | speaker ok (name)  speaker ok (mapped)'
+    console.log('\n  threshold  min-silence  change-sim  middle  join  learn |    WER  WER (no accents) | speaker ok (name)  speaker ok (mapped)'
       + '  avg score | lines  unknown   time');
     for (const params of combos) {
       const out = await runOnce(engine, voices, audio, params);
@@ -283,7 +287,7 @@ async function main() {
       runs.push({ params, result, out });
       console.log(`  ${lpad(params.threshold.toFixed(2), 9)}  ${lpad(params.minSilence.toFixed(2), 11)}`
         + `  ${lpad(params.changeSimilarity.toFixed(2), 10)}  ${lpad(params.splitMiddle ? 'on' : 'off', 6)}`
-        + `  ${lpad(params.learn ? 'on' : 'off', 5)} |`
+        + `  ${lpad(params.joinSimilarity.toFixed(2), 4)}  ${lpad(params.learn ? 'on' : 'off', 5)} |`
         + ` ${lpad(pct(result.wer), 6)}  ${lpad(pct(result.werNoAccents), 16)} |`
         + ` ${lpad(pct(result.speakerAccuracyByName), 17)}  ${lpad(pct(result.speakerAccuracyMapped), 19)}`
         + `  ${lpad(out.meanScore === null ? '–' : out.meanScore.toFixed(2), 9)} |`
@@ -296,7 +300,7 @@ async function main() {
     if (runs.length > 1) {
       const p = best.params;
       console.log(`\nBest: threshold ${p.threshold}, min-silence ${p.minSilence}, change-similarity ${p.changeSimilarity}, `
-        + `middle split ${p.splitMiddle ? 'on' : 'off'}, learning ${p.learn ? 'on' : 'off'}`);
+        + `middle split ${p.splitMiddle ? 'on' : 'off'}, join similarity ${p.joinSimilarity}, learning ${p.learn ? 'on' : 'off'}`);
     }
     printBreakdown(best.result);
     console.log(`\n  ${best.result.refTurns} reference turns, ${best.result.hypTurns} transcript lines;`

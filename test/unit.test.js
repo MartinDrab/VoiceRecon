@@ -15,7 +15,16 @@ const { TranscriptionSession, splitWords, dropLead, sentenceLines, wordsOf } = r
 const { SpeechEngine, l2normalize, spellable, analyze } = require('../src/speech/engine');
 const { readHeader, titleFromName } = require('../src/uploads');
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-test-'));
+// Data folders of the tests, deleted when they are done (each test closes its databases).
+const folders = [];
+const tmp = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-test-'));
+  folders.push(dir);
+  return dir;
+};
+test.after(() => {
+  for (const dir of folders) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+});
 
 test('WAV encode/decode round trip', () => {
   const samples = Float32Array.from({ length: 1600 }, (_, i) => Math.sin(i / 10) * 0.5);
@@ -368,6 +377,28 @@ test('a stretch of another voice inside one speaker\'s speech (A–B–A) is cut
   assert.deepStrictEqual(await cuts(aba, { splitMiddle: false }), []);
   assert.ok(near(await cuts(audio([1, 6], [2, 6])), [6]), 'one change still gets one cut');
   assert.deepStrictEqual(await cuts(audio([1, 17])), [], 'one speaker is not cut');
+
+  // Each part's voice print comes from the windows wholly inside it (no window across a cut).
+  const turns = await new TranscriptionSession(engine, voices).speakerTurns(aba);
+  assert.deepStrictEqual(turns.map((t) => Math.round(t.embedding[1])), [0, 1, 0]);
+  assert.ok(turns.every((t) => Math.abs(Math.hypot(...t.embedding) - 1) < 1e-6), 'normalized');
+  const [one] = await new TranscriptionSession(engine, voices).speakerTurns(audio([2, 17]));
+  assert.ok(one.embedding[1] > 0.999, 'one speaker: all windows');
+  assert.deepStrictEqual(await new TranscriptionSession(engine, voices).speakerTurns(audio([2, 2])),
+    [{ start: 0, end: 2 * sr }], 'too short for windows: embedded by the caller');
+});
+
+test('a line joins an unknown speaker at the join similarity, not at the stricter match threshold', () => {
+  const voices = { threshold: 0.6, identify: () => ({ voiceId: null, score: 0, scores: [] }) };
+  const at = (cos) => Float32Array.of(cos, Math.sqrt(1 - cos * cos), 0); // this similar to (1, 0, 0)
+  const session = new TranscriptionSession({ createVad: () => ({}) }, voices);
+  const audio = new Float32Array(16000 * 2);
+  const first = session.assignSpeaker(audio, at(1));
+  assert.strictEqual(session.assignSpeaker(audio, at(0.55)).id, first.id, 'the same unknown speaker at 0.55');
+  assert.notStrictEqual(session.assignSpeaker(audio, Float32Array.of(0, 0, 1)).id, first.id, 'someone else');
+  const strict = new TranscriptionSession({ createVad: () => ({}) }, voices, { joinSimilarity: 0.6 });
+  const s1 = strict.assignSpeaker(audio, at(1));
+  assert.notStrictEqual(strict.assignSpeaker(audio, at(0.55)).id, s1.id);
 });
 
 test('a recording is decoded, measured, voice-printed and re-encoded in one step (the job of the worker)', () => {
@@ -477,6 +508,19 @@ test('a saved threshold counts only for the speaker model it was set with', () =
   assert.strictEqual(manager('new').threshold, 0.65);
   assert.strictEqual(manager('old').threshold, 0.6);
   db.close();
+
+  // Saved before thresholds named their model, with no recordings to tell which model that was.
+  const empty = openDatabase(tmp());
+  setSetting(empty, 'speakerThreshold', 0.45);
+  const fresh = new VoiceManager(empty, engine('new'), { dataDir: tmp(), defaultThreshold: 0.6 });
+  fresh.init();
+  assert.strictEqual(fresh.threshold, 0.6, 'an old threshold of unknown model does not apply');
+  empty.prepare("INSERT INTO voices (name, color) VALUES ('Ben', '#00ff00')").run();
+  empty.prepare(`INSERT INTO voice_samples (voice_id, file, label, duration, speech_duration, embedding, model)
+    VALUES (1, 'x.wav', '', 1, 1, ?, 'new')`).run(Buffer.alloc(12));
+  assert.strictEqual(new VoiceManager(empty, engine('new'), { dataDir: tmp(), defaultThreshold: 0.6 }).threshold, 0.6,
+    'nor once voices are enrolled with the new model');
+  empty.close();
 });
 
 test('long lines are voice-printed in pieces of at most 6 s with event-loop turns between them', async () => {

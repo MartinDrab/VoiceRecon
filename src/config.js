@@ -65,8 +65,8 @@ module.exports = {
   /** Every file the speech engine loads (scripts/download-models.js fetches them). */
   modelFiles: [asr.encoder, asr.encoderWeights, asr.decoder, asr.joiner, asr.tokens, vadModel, speakerModel],
 
-  // Default cosine-similarity threshold for accepting a voice match (also for joining an unknown
-  // speaker). Can be changed at runtime from the Voices page (stored in the database, for the
+  // Default cosine-similarity threshold for accepting a voice match (joining an unknown speaker has
+  // its own, JOIN_SIMILARITY in src/transcriber.js). Can be changed at runtime from the Voices page (stored in the database, for the
   // speaker model it was set with). 0.6 for ResNet34-LM: on Czech parliament speakers with 10
   // enrolled voices, people who were not enrolled got a name for 0.6 / 1.1 / 1.8 % of their
   // 1.5 / 3 / 6 s segments (5 / 10 / 16 % at 0.5), while enrolled speakers were named correctly for
