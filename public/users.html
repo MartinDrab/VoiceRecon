@@ -56,6 +56,13 @@
         <p class="muted small" id="audio-used"></p>
         <p class="error-text" id="audio-error"></p>
       </div>
+
+      <div class="card mt">
+        <h2 data-i18n>Backup</h2>
+        <p class="muted small" data-i18n>One file with everything: users, voices and their recordings, transcripts and their audio, and the settings.</p>
+        <a class="btn" id="backup" href="/api/backup" download data-i18n>Download a backup</a>
+        <p class="muted small" data-i18n>To restore a backup, stop VoiceRecon and run npm run restore -- followed by the backup file, in the VoiceRecon folder. The current data are kept next to the restored ones.</p>
+      </div>
     </section>
 
     <section class="mt" id="account-section">

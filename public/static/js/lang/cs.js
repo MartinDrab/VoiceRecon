@@ -343,6 +343,14 @@ export default {
   },
   'Every line keeps its speaker.': 'Všechny řádky si ponechaly mluvčího.',
 
+  // backup
+  'Backup': 'Záloha',
+  'One file with everything: users, voices and their recordings, transcripts and their audio, and the settings.':
+    'Jeden soubor se vším: uživatelé, hlasy a jejich nahrávky, přepisy a jejich zvuk a nastavení.',
+  'Download a backup': 'Stáhnout zálohu',
+  'To restore a backup, stop VoiceRecon and run npm run restore -- followed by the backup file, in the VoiceRecon folder. The current data are kept next to the restored ones.':
+    'Zálohu obnovíte tak, že VoiceRecon zastavíte a ve složce VoiceRecon spustíte npm run restore -- a za tím soubor zálohy. Dosavadní data zůstanou uložená vedle obnovených.',
+
   // audio of transcripts
   'The audio of the whole transcript': 'Zvuk celého přepisu',
   'Delete audio': 'Smazat zvuk',

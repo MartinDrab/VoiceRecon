@@ -118,6 +118,33 @@ again, and a match threshold saved on the Voices page no longer applies: it was 
 model, so the new default 0.6 is used until you set another one. `models/3dspeaker_campplus_zh_en_advanced.onnx`
 is then no longer used; keep it if you want to switch back with `SPEAKER_MODEL`.
 
+### Backup and restore
+
+Everything VoiceRecon keeps is in `DATA_DIR` (`data/`): users, voices and their recordings,
+transcripts and their audio, and the settings. A backup puts it into one `.tar` file:
+
+- On the **Users** page, administrators click *Download a backup*, or
+- on the computer running VoiceRecon (also while it runs):
+
+  ```bash
+  npm run backup -- my-backup.tar
+  ```
+
+Without a name, the file is `voicerecon-backup-<date>.tar` in the current folder. The database is
+copied consistently even while people are listening; login sessions are left out, so after a
+restore everyone signs in again. Uploads still waiting to be transcribed are not included.
+
+To restore one, stop VoiceRecon and run, in its folder:
+
+```bash
+npm run restore -- my-backup.tar
+```
+
+It replaces the whole data folder with the backup's contents. The current one is not deleted but
+renamed to `data.before-restore-<time>`, next to it; delete that once everything works. A backup
+from an older version is brought up to date when VoiceRecon starts. Any `tar` program can open the
+file too (e.g. to take a single recording out of it).
+
 ### Using it from other devices (phone, another PC)
 
 Browsers only allow microphone access on `https://` pages or on `localhost`. To use VoiceRecon over

@@ -203,6 +203,21 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.deepStrictEqual([audioSettings.keep, audioSettings.limitGb], [true, 10]);
     assert.ok(audioSettings.usedBytes >= pcm.length);
 
+    // an administrator downloads everything as one file, the transcript's audio included
+    const backupRes = await fetch(`${base}/api/backup`, { headers: { cookie } });
+    assert.strictEqual(backupRes.headers.get('content-type'), 'application/x-tar');
+    assert.match(backupRes.headers.get('content-disposition'), /^attachment; filename="voicerecon-backup-[\d-]+\.tar"$/);
+    const backup = Buffer.from(await backupRes.arrayBuffer());
+    assert.strictEqual(backup.length, Number(backupRes.headers.get('content-length')));
+    const entries = [];
+    for (let at = 0; backup[at];) {
+      const size = parseInt(backup.toString('latin1', at + 124, at + 135), 8);
+      entries.push(backup.toString('utf8', at, at + 100).replace(/\0.*$/s, ''));
+      at += 512 + Math.ceil(size / 512) * 512;
+    }
+    assert.deepStrictEqual(entries.slice(0, 2), ['backup.json', 'voicerecon.db']);
+    assert.ok(entries.some((n) => n.startsWith('audio/')) && entries.some((n) => n.startsWith('recordings/')));
+
     // a reconnecting page continues the same transcript; "New transcript" starts another
     const fresh = next('transcript');
     ws.send(JSON.stringify({ type: 'newTranscript' }));

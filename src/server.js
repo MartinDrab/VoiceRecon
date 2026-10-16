@@ -16,6 +16,7 @@ const { VoiceManager } = require('./voices');
 const { TranscriptStore } = require('./transcripts');
 const { UploadQueue } = require('./uploads');
 const { AudioStore } = require('./audio-store');
+const { prepareBackup } = require('./backup');
 const { attachWebSocket } = require('./ws');
 
 const PUBLIC = path.join(config.root, 'public');
@@ -217,6 +218,23 @@ api.put('/settings/learn', admin, json, (req, res) => {
 api.put('/settings/vocabulary', admin, json, (req, res) => {
   voices.setVocabulary(req.body.words);
   res.json({ vocabulary: voices.vocabulary });
+});
+// Everything VoiceRecon keeps as one file (backup.js); restored with npm run restore.
+api.get('/backup', admin, async (_req, res) => {
+  const backup = prepareBackup(db, config.dataDir);
+  res.set({
+    'Content-Type': 'application/x-tar',
+    'Content-Length': String(backup.bytes),
+    'Content-Disposition': `attachment; filename="${backup.filename}"`,
+    'Cache-Control': 'no-store',
+  });
+  try {
+    await backup.write(res);
+  } catch (err) {
+    if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.warn('Sending a backup failed:', err.message);
+  } finally {
+    backup.cleanup();
+  }
 });
 // Whether the audio of transcripts is kept (to play lines in History), and at most how much.
 api.get('/settings/audio', admin, (_req, res) => res.json(audio.settings()));

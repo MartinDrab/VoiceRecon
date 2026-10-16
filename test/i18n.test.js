@@ -84,8 +84,9 @@ function pageKeys() {
 /** Messages the server sends to users: HttpError and Error texts, and translate(lang, '…'). */
 function serverKeys() {
   const keys = new Map();
-  // The evaluation tool and the configuration only talk to the command line, in English.
-  const sources = files(SRC, (f) => f.endsWith('.js') && !f.startsWith('lang') && !['evaluation.js', 'config.js'].includes(f));
+  // The evaluation tool, the configuration and restoring a backup only talk to the command line,
+  // in English (a backup's download fails only with an internal error).
+  const sources = files(SRC, (f) => f.endsWith('.js') && !f.startsWith('lang') && !['evaluation.js', 'config.js', 'backup.js'].includes(f));
   for (const file of sources) {
     const code = read(file);
     const name = path.relative(ROOT, file);
