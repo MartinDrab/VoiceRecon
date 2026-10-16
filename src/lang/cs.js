@@ -82,7 +82,7 @@ module.exports = {
   'Send the recording as a 16 kHz mono 16-bit WAV file.': 'Pošlete nahrávku jako soubor WAV (16 kHz, mono, 16 bitů).',
   'The recording is empty.': 'Nahrávka je prázdná.',
   'The upload was interrupted.': 'Odesílání bylo přerušeno.',
-  'Format must be txt, srt or json.': 'Formát musí být txt, srt nebo json.',
+  'Format must be txt, srt, vtt, docx or json.': 'Formát musí být txt, srt, vtt, docx nebo json.',
   'Transcript of {date}': 'Přepis z {date}',
   'Speaker {n}': 'Mluvčí {n}',
 

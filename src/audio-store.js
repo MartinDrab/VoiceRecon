@@ -3,10 +3,11 @@
 /**
  * The audio of saved transcripts, so that History can play any line (and the whole recording can be
  * downloaded). A transcript's audio is made of pieces in DATA_DIR/audio, each covering the transcript
- * from `start_sec` on: an uploaded file is one piece (its WAV file, kept after transcription), and
- * each live session writing to a transcript is another (raw 16 kHz mono 16-bit PCM, written as the
- * microphone audio arrives). A piece's length is its file's size, so it can be played while it is
- * still being written. Gaps between pieces play as silence.
+ * from `start_sec` on: an uploaded file is one piece, and each live session writing to a transcript
+ * is another. Pieces are Ogg Opus (opus.js, about 12 MB per hour instead of 115 MB as WAV): live
+ * audio is encoded as it arrives, an uploaded WAV file is converted in the background after it was
+ * transcribed (and so are WAV or raw PCM pieces of older versions, at startup). A piece can be
+ * played while it is still being written. Gaps between pieces play as silence.
  *
  * Settings (administrators, on the Users page): whether audio is kept at all, and how much of it at
  * most; beyond that the audio of the oldest transcripts is deleted, their text stays.
@@ -18,11 +19,12 @@ const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { getSetting, setSetting } = require('./db');
+const { OpusWriter, opusSamples, opusDecode } = require('./opus');
 const { HttpError } = require('./errors');
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SECOND = SAMPLE_RATE * 2;
-const DEFAULT_LIMIT_GB = 10; // about 87 hours
+const DEFAULT_LIMIT_GB = 10; // about 900 hours of Opus
 const GB = 1024 ** 3;
 const SILENCE = Buffer.alloc(64 * 1024);
 
@@ -53,15 +55,27 @@ function fileSize(file) {
 }
 
 class AudioStore {
-  constructor(db, dataDir) {
+  /**
+   * @param {any} db
+   * @param {string} dataDir
+   * @param {{ compress?: boolean }} [options] compress: false keeps raw PCM and WAV pieces as they are (tests)
+   */
+  constructor(db, dataDir, { compress = true } = {}) {
     this.db = db;
     this.dir = path.join(dataDir, 'audio');
+    this.compress = compress;
     fs.mkdirSync(this.dir, { recursive: true });
     this.writing = new Set(); // file names still being written (live sessions)
     this.held = new Map(); // file name -> users reading it (transcribing again): not deleted for the limit
+    this.toConvert = []; // WAV and raw PCM pieces waiting to become Ogg Opus
+    this.converting = null; // Promise while converting
+    this.afterRelease = new Set(); // waiting to be converted until no one reads them
   }
 
-  /** Call at startup: forgets pieces whose file is gone and deletes files no piece refers to. */
+  /**
+   * Call at startup: forgets pieces whose file is gone, deletes files no piece refers to, and
+   * converts pieces that are not Ogg Opus yet.
+   */
   init() {
     const known = new Set();
     for (const r of this.db.prepare('SELECT id, file FROM transcript_audio').all()) {
@@ -72,6 +86,7 @@ class AudioStore {
       if (!known.has(f)) fs.rmSync(path.join(this.dir, f), { force: true });
     }
     this.enforceLimit();
+    this.convertLater(...[...known].filter((f) => !f.endsWith('.opus')));
   }
 
   // ---------- settings ----------
@@ -113,22 +128,25 @@ class AudioStore {
   // ---------- storing ----------
 
   /**
-   * A new piece of live audio: raw 16 kHz mono 16-bit samples appended to a file as they arrive.
-   * It belongs to no transcript until add() is called (a live transcript is created with its first
-   * line); end() when no more audio comes.
+   * A new piece of live audio: 16 kHz mono 16-bit samples, encoded to Ogg Opus as they arrive (one
+   * page a second). It belongs to no transcript until add() is called (a live transcript is created
+   * with its first line); end() when no more audio comes.
    * @returns {{ name: string, write(pcm: Buffer): void, end(): void }}
    */
   startLive() {
-    const name = `${crypto.randomUUID()}.pcm`;
+    const name = `${crypto.randomUUID()}${this.compress ? '.opus' : '.pcm'}`;
     const stream = fs.createWriteStream(path.join(this.dir, name));
     stream.on('error', (err) => console.error(`Writing audio ${name} failed:`, err.message));
+    const writer = this.compress ? new OpusWriter((chunk) => stream.write(chunk)) : null;
     this.writing.add(name);
     return {
       name,
       write: (pcm) => {
-        stream.write(pcm);
+        if (writer) writer.write(pcm);
+        else stream.write(pcm);
       },
       end: () => {
+        if (writer) writer.end();
         stream.end(() => {
           this.writing.delete(name);
           // Not added to a transcript (no line was said), or its transcript was deleted meanwhile.
@@ -156,7 +174,75 @@ class AudioStore {
     }
     this.db.prepare('INSERT INTO transcript_audio (transcript_id, file, data_start, start_sec, created_at) VALUES (?, ?, ?, ?, ?)')
       .run(transcriptId, file, dataStart, start, Date.now());
-    if (move) this.enforceLimit();
+    if (move) {
+      this.enforceLimit();
+      if (!file.endsWith('.opus')) this.convertLater(file);
+    }
+  }
+
+  // ---------- converting to Ogg Opus ----------
+
+  /** Converts these WAV or raw PCM pieces to Ogg Opus, one at a time, in the background. */
+  convertLater(...names) {
+    if (!this.compress) return;
+    for (const n of names) if (!this.toConvert.includes(n)) this.toConvert.push(n);
+    if (!this.converting && this.toConvert.length) {
+      this.converting = (async () => {
+        while (this.toConvert.length) {
+          const name = this.toConvert.shift();
+          try {
+            await this.convert(name);
+          } catch (err) {
+            console.warn(`Converting audio ${name} failed:`, err.message);
+          }
+        }
+      })().finally(() => {
+        this.converting = null;
+      });
+    }
+  }
+
+  /** Resolves once nothing waits to be converted (tests). */
+  async converted() {
+    while (this.converting) await this.converting;
+  }
+
+  async convert(name) {
+    const row = this.db.prepare('SELECT data_start FROM transcript_audio WHERE file = ?').get(name);
+    if (!row || this.writing.has(name)) return;
+    const source = path.join(this.dir, name);
+    const opusName = `${crypto.randomUUID()}.opus`;
+    const target = path.join(this.dir, opusName);
+    const out = fs.createWriteStream(target);
+    const writer = new OpusWriter((chunk) => out.write(chunk));
+    const fh = await fs.promises.open(source, 'r');
+    try {
+      const buf = Buffer.alloc(BYTES_PER_SECOND);
+      for (let pos = row.data_start; ;) {
+        const { bytesRead } = await fh.read(buf, 0, buf.length, pos);
+        if (!bytesRead) break;
+        writer.write(buf.subarray(0, bytesRead - (bytesRead % 2)));
+        pos += bytesRead;
+        await new Promise((resolve) => setImmediate(resolve)); // a second at a time: listening goes on
+      }
+      writer.end();
+    } finally {
+      await fh.close();
+      await new Promise((resolve) => out.end(resolve));
+    }
+    // Swapped in only if the piece is still there and no one reads its file (transcribing again).
+    if (this.held.has(name)) {
+      fs.rmSync(target, { force: true });
+      this.afterRelease.add(name);
+      return;
+    }
+    if (!this.db.prepare('UPDATE transcript_audio SET file = ?, data_start = 0 WHERE file = ?').run(opusName, name).changes) {
+      fs.rmSync(target, { force: true });
+      return;
+    }
+    try {
+      fs.rmSync(source, { force: true });
+    } catch { /* still open somewhere: deleted at the next start, as no piece refers to it */ }
   }
 
   /** Deletes a transcript's audio (the transcript stays). Returns whether it had any. */
@@ -201,18 +287,34 @@ class AudioStore {
       else this.held.delete(n);
     }
     this.enforceLimit();
+    const ready = [...this.afterRelease].filter((n) => !this.held.has(n));
+    for (const n of ready) this.afterRelease.delete(n);
+    this.convertLater(...ready);
   }
 
-  /** The transcript's pieces: [{ name, file (full path), dataStart, start, seconds }] by start. */
+  /** The transcript's pieces: [{ name, file (full path), opus, dataStart, start, seconds }] by start. */
   pieces(transcriptId) {
     return this.db.prepare('SELECT file, data_start, start_sec FROM transcript_audio WHERE transcript_id = ? ORDER BY start_sec, id')
       .all(transcriptId)
       .map((r) => {
         const file = path.join(this.dir, r.file);
-        const bytes = Math.max(0, fileSize(file) - r.data_start);
-        return { name: r.file, file, dataStart: r.data_start, start: r.start_sec, seconds: Math.floor(bytes / 2) / SAMPLE_RATE };
+        const opus = r.file.endsWith('.opus');
+        const samples = opus
+          ? (fs.existsSync(file) ? opusSamples(file) : 0)
+          : Math.floor(Math.max(0, fileSize(file) - r.data_start) / 2);
+        return { name: r.file, file, opus, dataStart: r.data_start, start: r.start_sec, seconds: samples / SAMPLE_RATE };
       })
       .filter((p) => p.seconds > 0);
+  }
+
+  /** A piece's samples from its start, as Buffers of 16-bit samples (transcribing it again). */
+  async* pcm(piece) {
+    if (piece.opus) {
+      for (const chunk of opusDecode(piece.file, 0, Math.round(piece.seconds * SAMPLE_RATE))) yield chunk;
+      return;
+    }
+    const end = piece.dataStart + 2 * Math.round(piece.seconds * SAMPLE_RATE);
+    if (end > piece.dataStart) yield* fs.createReadStream(piece.file, { start: piece.dataStart, end: end - 1 });
   }
 
   /**
@@ -239,16 +341,28 @@ class AudioStore {
         at = s0;
       }
       const end = Math.min(s1, last);
-      parts.push({ file: p.file, from: p.dataStart + 2 * (at - s0), to: p.dataStart + 2 * (end - s0) });
+      if (p.opus) parts.push({ opus: p.file, from: at - s0, to: end - s0 }); // samples
+      else parts.push({ file: p.file, from: p.dataStart + 2 * (at - s0), to: p.dataStart + 2 * (end - s0) });
       at = end;
     }
     if (at < last) parts.push({ silence: last - at });
 
+    const silence = function* (bytes) {
+      for (let left = bytes; left > 0; left -= SILENCE.length) yield SILENCE.subarray(0, Math.min(left, SILENCE.length));
+    };
     async function* samples() {
       yield wavHeader(2 * total);
       for (const part of parts) {
         if (part.silence) {
-          for (let left = part.silence * 2; left > 0; left -= SILENCE.length) yield SILENCE.subarray(0, Math.min(left, SILENCE.length));
+          yield* silence(part.silence * 2);
+        } else if (part.opus) {
+          // Exactly the samples promised, even if decoding gives fewer (a page still being written).
+          let sent = 0;
+          for (const chunk of opusDecode(part.opus, part.from, part.to)) {
+            sent += chunk.length;
+            yield chunk;
+          }
+          yield* silence(2 * (part.to - part.from) - sent);
         } else if (part.to > part.from) {
           yield* fs.createReadStream(part.file, { start: part.from, end: part.to - 1 });
         }

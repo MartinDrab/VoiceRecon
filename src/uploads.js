@@ -174,7 +174,7 @@ class UploadQueue {
     this.waiting.push({
       id: transcriptId,
       // Each piece in its own session (live sessions were separate too), at its own times.
-      pieces: pieces.map((p, i) => ({ name: p.name, file: p.file, dataStart: p.dataStart, bytes: Math.round(p.seconds * 16000) * 2, start: p.start, session: i + 1 })),
+      pieces: pieces.map((p, i) => ({ ...p, bytes: Math.round(p.seconds * 16000) * 2, session: i + 1 })),
       status,
       cancelled: false,
       done,
@@ -281,25 +281,28 @@ class UploadQueue {
     session.on('error', (err) => {
       failure = err;
     });
-    const fh = await fs.promises.open(piece.file, 'r');
+    // An uploaded WAV file is read directly; kept audio (transcribing again) may be Ogg Opus.
+    const chunks = job.pieces ? this.audio.pcm(piece) : wavChunks(piece.file, piece.dataStart, piece.bytes);
     try {
-      const buf = Buffer.alloc(STEP);
-      for (let pos = 0; pos < piece.bytes && !job.cancelled && !failure;) {
-        const { bytesRead } = await fh.read(buf, 0, Math.min(STEP, piece.bytes - pos), piece.dataStart + pos);
-        if (!bytesRead) break;
-        for (let o = 0; o < bytesRead && !job.cancelled; o += PIECE) {
-          session.push(int16ToFloat(buf.subarray(o, Math.min(o + PIECE, bytesRead))));
+      let pos = 0;
+      let settledAt = 0;
+      for await (const chunk of chunks) {
+        if (job.cancelled || failure) break;
+        for (let o = 0; o < chunk.length && !job.cancelled; o += PIECE) {
+          session.push(int16ToFloat(chunk.subarray(o, Math.min(o + PIECE, chunk.length))));
           await yieldToEventLoop();
         }
-        await session.settled();
-        pos += bytesRead;
+        pos += chunk.length;
+        if (pos - settledAt >= STEP) {
+          await session.settled(); // wait every few seconds of audio until it is transcribed
+          settledAt = pos;
+        }
         job.status.done = before + pos / BYTES_PER_SECOND;
       }
       if (!job.cancelled && !failure) await session.finish();
       if (failure) throw failure;
     } finally {
       session.close();
-      await fh.close();
     }
   }
 
@@ -337,6 +340,22 @@ class UploadQueue {
     } catch (err) {
       console.warn(`Transcript ${job.id}: deciding its speakers per recording failed: ${err.message}`);
     }
+  }
+}
+
+/** A WAV file's samples from dataStart on, `bytes` of them, in pieces of a few seconds. */
+async function* wavChunks(file, dataStart, bytes) {
+  const fh = await fs.promises.open(file, 'r');
+  try {
+    for (let pos = 0; pos < bytes;) {
+      const buf = Buffer.alloc(Math.min(STEP, bytes - pos));
+      const { bytesRead } = await fh.read(buf, 0, buf.length, dataStart + pos);
+      if (!bytesRead) break;
+      yield buf.subarray(0, bytesRead);
+      pos += bytesRead;
+    }
+  } finally {
+    await fh.close();
   }
 }
 

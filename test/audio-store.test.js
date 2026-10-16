@@ -16,13 +16,14 @@ test.after(() => {
   for (const dir of folders) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
 });
 
-function setup() {
+/** compress: false keeps raw PCM and WAV pieces, whose samples come back exactly. */
+function setup({ compress = false } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-audio-'));
   folders.push(dataDir);
   const db = openDatabase(dataDir);
   const transcript = (startedAt) => Number(db.prepare('INSERT INTO transcripts (started_at, updated_at) VALUES (?, ?)')
     .run(startedAt, startedAt).lastInsertRowid);
-  return { dataDir, db, store: new AudioStore(db, dataDir), transcript };
+  return { dataDir, db, store: new AudioStore(db, dataDir, { compress }), transcript };
 }
 
 /** `seconds` of 16 kHz samples, all `value`. */
@@ -90,6 +91,46 @@ test('a transcript plays from its pieces, with silence between them', async () =
   db.close();
 });
 
+test('kept audio is Ogg Opus: live audio as it comes, an uploaded WAV file once it was transcribed', async () => {
+  const { dataDir, db, store, transcript } = setup({ compress: true });
+  const tid = transcript(1);
+  const tone = (seconds) => {
+    const b = Buffer.alloc(Math.round(seconds * 16000) * 2);
+    for (let i = 0; i < b.length / 2; i++) b.writeInt16LE(Math.round(8000 * Math.sin(i / 9)), 2 * i);
+    return b;
+  };
+  const loudness = (samples) => Math.sqrt(samples.reduce((n, x) => n + x * x, 0) / samples.length);
+
+  const live = store.startLive();
+  assert.match(live.name, /\.opus$/);
+  for (let i = 0; i < 25; i++) live.write(tone(0.1)); // 2.5 s in 100 ms frames
+  store.add(tid, live.name, { start: 0 });
+  live.end();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  const wav = path.join(dataDir, 'upload.wav');
+  fs.writeFileSync(wav, Buffer.concat([wavHeader(4 * 32000), tone(4)]));
+  store.add(tid, wav, { start: 10, dataStart: 44, move: true }); // kept as WAV until converted
+  await store.converted();
+  const files = fs.readdirSync(store.dir).sort();
+  assert.ok(files.every((f) => f.endsWith('.opus')) && files.length === 2, `converted and the WAV gone: ${files}`);
+  assert.deepStrictEqual(store.pieces(tid).map((p) => [p.start, p.seconds]), [[0, 2.5], [10, 4]]);
+  const used = store.usedBytes();
+  assert.ok(used < (2.5 + 4) * 32000 / 7, `${used} bytes for 6.5 s`);
+
+  // Played back: tone where there was audio, silence between, at the right times.
+  const { samples } = await fetchAudio(store, tid, { from: 1, to: 12 });
+  assert.strictEqual(samples.length, 11 * 16000);
+  assert.ok(loudness(samples.slice(0, 16000)) > 4000, 'the live piece');
+  assert.strictEqual(loudness(samples.slice(1.6 * 16000, 8.9 * 16000)), 0, 'silence between');
+  assert.ok(loudness(samples.slice(9.1 * 16000, 11 * 16000)) > 4000, 'the uploaded piece');
+  // Read whole for transcribing again.
+  const pcm = [];
+  for await (const chunk of store.pcm(store.pieces(tid)[1])) pcm.push(chunk);
+  assert.strictEqual(Buffer.concat(pcm).length, 4 * 32000);
+  db.close();
+});
+
 test('live audio that never got a transcript is deleted when it ends', async () => {
   const { db, store } = setup();
   const live = store.startLive();
@@ -125,7 +166,7 @@ test('at startup, files without a piece and pieces without a file are cleaned up
   fs.writeFileSync(f, pcm(1, 1));
   store.add(tid, f, { start: 0, move: true });
   db.prepare("INSERT INTO transcript_audio (transcript_id, file, data_start, start_sec, created_at) VALUES (?, 'gone.pcm', 0, 5, 0)").run(tid);
-  new AudioStore(db, dataDir).init();
+  new AudioStore(db, dataDir, { compress: false }).init();
   assert.strictEqual(fs.readdirSync(store.dir).length, 1);
   assert.strictEqual(db.prepare('SELECT COUNT(*) AS n FROM transcript_audio').get().n, 1);
   db.close();

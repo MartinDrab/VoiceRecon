@@ -198,10 +198,34 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
       assert.strictEqual(res.headers.get('content-type'), 'audio/wav');
       return Buffer.from(await res.arrayBuffer()).subarray(44);
     };
-    assert.ok((await clip(transcriptId, 2, 4)).equals(pcm.subarray(2 * 32000, 4 * 32000)), 'the kept audio, at its times');
+    // Kept audio is Ogg Opus: the same sound at the same times (loudness every 20 ms), not the same bytes.
+    const sameSound = (a, b) => {
+      const envelope = (buf) => {
+        const out = [];
+        for (let i = 0; i + 640 <= buf.length; i += 640) {
+          let e = 0;
+          for (let j = i; j < i + 640; j += 2) e += buf.readInt16LE(j) ** 2;
+          out.push(Math.sqrt(e / 320));
+        }
+        return out;
+      };
+      const [x, y] = [envelope(a), envelope(b)];
+      const mean = (v) => v.reduce((n, q) => n + q, 0) / v.length;
+      const [mx, my] = [mean(x), mean(y)];
+      let xy = 0;
+      let xx = 0;
+      let yy = 0;
+      for (let i = 0; i < x.length; i++) {
+        xy += (x[i] - mx) * (y[i] - my);
+        xx += (x[i] - mx) ** 2;
+        yy += (y[i] - my) ** 2;
+      }
+      return a.length === b.length && xy / Math.sqrt(xx * yy) > 0.9;
+    };
+    assert.ok(sameSound(await clip(transcriptId, 2, 4), pcm.subarray(2 * 32000, 4 * 32000)), 'the kept audio, at its times');
     const audioSettings = await call('GET', '/api/settings/audio');
     assert.deepStrictEqual([audioSettings.keep, audioSettings.limitGb], [true, 10]);
-    assert.ok(audioSettings.usedBytes >= pcm.length);
+    assert.ok(audioSettings.usedBytes > 0 && audioSettings.usedBytes < pcm.length / 5, 'kept as Ogg Opus, far smaller than the audio streamed');
 
     // an administrator downloads everything as one file, the transcript's audio included
     const backupRes = await fetch(`${base}/api/backup`, { headers: { cookie } });
@@ -295,7 +319,7 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.deepStrictEqual(fs.readdirSync(path.join(dataDir, 'uploads')), [], 'the uploaded file is removed');
     // ... and kept as the transcript's audio, from where the part starts
     assert.strictEqual(file.transcript.audio, true);
-    assert.ok((await clip(fileId, offset + 2, offset + 4)).equals(recording.subarray(44 + 2 * 32000, 44 + 4 * 32000)));
+    assert.ok(sameSound(await clip(fileId, offset + 2, offset + 4), recording.subarray(44 + 2 * 32000, 44 + 4 * 32000)));
     const whole = await fetch(`${base}/api/transcripts/${fileId}/audio?download=1`, { headers: { cookie } });
     assert.match(whole.headers.get('content-disposition'), /^attachment; filename="transcript-\d+-[\d-]+\.wav"$/);
     assert.strictEqual((await whole.arrayBuffer()).byteLength, recording.length, 'the whole recording, from the part\'s start');

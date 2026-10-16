@@ -88,7 +88,7 @@ function renderHeader() {
   if (transcript.user) meta.push(t('by {user}', { user: transcript.user }));
   $('meta').replaceChildren(...[meta.join(' · '), statusBadge(transcript)].filter(Boolean));
   $('speakers').replaceChildren(...transcript.speakers.map((s) => h('span.chip', { style: { '--c': speakerColor(s) } }, `${speakerLabel(s.name)} · ${s.lines}`)));
-  for (const f of ['txt', 'srt', 'json']) $(`export-${f}`).href = `/api/transcripts/${tid}/export?format=${f}`;
+  for (const f of ['txt', 'srt', 'vtt', 'docx', 'json']) $(`export-${f}`).href = `/api/transcripts/${tid}/export?format=${f}`;
   $('export-wav').href = `/api/transcripts/${tid}/audio?download=1`;
   $('export-wav').classList.toggle('hidden', !transcript.audio);
   $('delete-audio').classList.toggle('hidden', !(transcript.audio && mayDelete()));

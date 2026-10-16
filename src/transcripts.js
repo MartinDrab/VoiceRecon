@@ -2,6 +2,7 @@
 
 const { HttpError } = require('./errors');
 const { regroupSpeakers } = require('./regroup');
+const { transcriptDocx } = require('./docx');
 const { translate } = require('./i18n');
 const { meanEmbedding, embeddingToBlob, embeddingFromBlob } = require('./speech/engine');
 
@@ -437,6 +438,36 @@ class TranscriptStore {
       }).join('\n');
       return { filename: `${base}.srt`, type: 'application/x-subrip; charset=utf-8', body };
     }
+    if (format === 'vtt') {
+      // WebVTT (web video players): like SRT, with the speaker as a voice span; < > & escaped.
+      const vttTime = (s) => srtTime(s).replace(',', '.');
+      const text = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cues = lines.map((l, i) => {
+        const end = Math.max(l.end, l.start + 0.5);
+        const name = this.speakerName(l.speaker.name, lang).replace(/[<>\r\n]/g, ' ');
+        return `${i + 1}\n${vttTime(l.start)} --> ${vttTime(end)}\n<v ${name}>${text(l.text)}\n`;
+      });
+      return { filename: `${base}.vtt`, type: 'text/vtt; charset=utf-8', body: `WEBVTT\n\n${cues.join('\n')}` };
+    }
+    if (format === 'docx') {
+      // Word: one paragraph per turn (the lines of one speaker in a row).
+      const turns = [];
+      for (const l of lines) {
+        const last = turns[turns.length - 1];
+        if (last && last.key === l.speaker.key) {
+          last.text += ` ${l.text}`;
+          continue;
+        }
+        turns.push({ key: l.speaker.key, time: localTime(l.spokenAt), name: this.speakerName(l.speaker.name, lang), color: l.speaker.color, text: l.text });
+      }
+      const body = transcriptDocx({
+        title: this.title(t, lang),
+        meta: `${localDateTime(t.started_at)}, ${clockOffset(t.duration)}`,
+        created: new Date(t.started_at),
+        turns,
+      });
+      return { filename: `${base}.docx`, type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', body };
+    }
     if (format === 'json') {
       const data = {
         id: t.id,
@@ -455,7 +486,7 @@ class TranscriptStore {
       };
       return { filename: `${base}.json`, type: 'application/json; charset=utf-8', body: `${JSON.stringify(data, null, 2)}\n` };
     }
-    throw new HttpError(400, 'Format must be txt, srt or json.');
+    throw new HttpError(400, 'Format must be txt, srt, vtt, docx or json.');
   }
 }
 

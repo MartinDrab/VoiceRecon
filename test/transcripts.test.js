@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const zlib = require('zlib');
 const { openDatabase } = require('../src/db');
 const { VoiceManager } = require('../src/voices');
 const { TranscriptStore, ftsTerms, srtTime } = require('../src/transcripts');
@@ -212,6 +213,28 @@ test('editing, moving and deleting lines keeps search up to date', () => {
   db.close();
 });
 
+/** The files of a zip archive, as { name: Buffer }, checked against their CRCs and the central directory. */
+function unzip(buf) {
+  const files = {};
+  let at = 0;
+  while (buf.readUInt32LE(at) === 0x04034b50) {
+    const [method, crc, packed, size, nameLength, extra] = [buf.readUInt16LE(at + 8), buf.readUInt32LE(at + 14),
+      buf.readUInt32LE(at + 18), buf.readUInt32LE(at + 22), buf.readUInt16LE(at + 26), buf.readUInt16LE(at + 28)];
+    const name = buf.toString('utf8', at + 30, at + 30 + nameLength);
+    const start = at + 30 + nameLength + extra;
+    const data = method === 8 ? zlib.inflateRawSync(buf.subarray(start, start + packed)) : buf.subarray(start, start + packed);
+    assert.strictEqual(data.length, size, name);
+    assert.strictEqual(zlib.crc32(data), crc, name);
+    files[name] = data;
+    at = start + packed;
+  }
+  const end = buf.length - 22;
+  assert.strictEqual(buf.readUInt32LE(end), 0x06054b50, 'the end of the central directory');
+  assert.strictEqual(buf.readUInt16LE(end + 10), Object.keys(files).length);
+  assert.strictEqual(buf.readUInt32LE(end + 16), at, 'the central directory follows the files');
+  return files;
+}
+
 test('export as TXT, SRT and JSON', () => {
   const { db, store, jirka } = setup();
   const t = store.create(1);
@@ -232,5 +255,42 @@ test('export as TXT, SRT and JSON', () => {
   assert.deepStrictEqual(json.lines.map((l) => l.speaker), ['Jirka', 'Speaker 1', 'Speaker 1', 'Jirka']);
   assert.throws(() => store.export(t.id, 'pdf'), /Format must be/);
   assert.strictEqual(srtTime(3723.4567), '01:02:03,457');
+  db.close();
+});
+
+test('export as WebVTT and DOCX', () => {
+  const { db, store, jirka } = setup();
+  const t = store.create(1);
+  addLines(store, t.id, jirka);
+  store.rename(t.id, 'Q&A <draft>');
+  store.appendLine(t.id, {
+    start: 13, end: 14, spokenAt: Date.UTC(2026, 9, 15, 12, 0, 13), speaker: { voiceId: jirka, key: `v:${jirka}`, label: 'Jirka' },
+    text: 'A < B & C', seconds: 1, model: 'm',
+  });
+
+  const vtt = store.export(t.id, 'vtt');
+  assert.match(vtt.filename, /\.vtt$/);
+  assert.match(vtt.type, /^text\/vtt/);
+  assert.match(vtt.body, /^WEBVTT\n\n1\n00:00:01\.000 --> 00:00:03\.000\n<v Jirka>Ahoj, jak se máš\?\n\n2\n/);
+  assert.match(vtt.body, /<v Speaker 1>Byli jsme v Itálii u moře\./);
+  assert.match(vtt.body, /<v Jirka>A &lt; B &amp; C\n$/, 'text is escaped');
+  assert.strictEqual(vtt.body.match(/-->/g).length, 5);
+
+  const docx = store.export(t.id, 'docx');
+  assert.match(docx.filename, /\.docx$/);
+  assert.strictEqual(docx.type, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  const files = unzip(docx.body);
+  assert.deepStrictEqual(Object.keys(files).sort(), ['[Content_Types].xml', '_rels/.rels', 'docProps/core.xml', 'word/document.xml']);
+  const doc = files['word/document.xml'].toString('utf8');
+  const paragraphs = doc.match(/<w:p>.*?<\/w:p>/g).map((p) => p.match(/<w:t[^>]*>([^<]*)<\/w:t>/g).map((r) => r.replace(/<[^>]+>/g, '')).join(''));
+  assert.strictEqual(paragraphs[0], 'Q&amp;A &lt;draft&gt;', 'the title, escaped');
+  // One paragraph per turn: Speaker 1's two lines are one, Jirka's last two too.
+  assert.deepStrictEqual(paragraphs.slice(2).map((p) => p.replace(/^\d\d:\d\d:\d\d {2}/, '')), [
+    'Jirka: Ahoj, jak se máš?',
+    'Speaker 1: Právě jsem se vrátila z dovolené. Byli jsme v Itálii u moře.',
+    'Jirka: To je skvělé. A &lt; B &amp; C',
+  ]);
+  assert.match(doc, /<w:color w:val="E5484D"\/><\/w:rPr><w:t xml:space="preserve">Jirka: /, "the speaker in the voice's color");
+  assert.match(files['docProps/core.xml'].toString('utf8'), /<dc:title>Q&amp;A &lt;draft&gt;<\/dc:title>/);
   db.close();
 });

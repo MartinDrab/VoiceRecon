@@ -20,7 +20,7 @@ The UI is in English and Czech (chosen per browser); the transcribed speech is m
 ## Commands
 
 ```bash
-npm install                          # dependencies (express, ws, sherpa-onnx-node)
+npm install                          # dependencies (express, ws, sherpa-onnx-node, opusscript)
 npm run models                       # speech models -> models/ (~3 GB download, gitignored)
 npm run models -- --test             # also the two Czech TTS voices used for test audio
 node scripts/make-test-audio.js      # synthetic conversation -> test/fixtures/ (gitignored)
@@ -60,8 +60,10 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 | `src/auth.js` | Users, scrypt hashes, sessions, login throttling, Express guards |
 | `src/db.js` | SQLite (`node:sqlite`), migrations, settings |
 | `src/audio.js` | WAV decode/encode, PCM conversion, windowed-sinc `resample()` |
-| `src/transcripts.js` | Saved transcripts: lines with speaker keys and voice prints, full-text search (SQLite FTS5), edits, speaker changes, TXT/SRT/JSON export |
-| `src/audio-store.js` | Audio kept with transcripts (`DATA_DIR/audio`, table `transcript_audio`): pieces that each start at a transcript time, live PCM written as it arrives (`ws.js`) or an uploaded WAV kept after transcription (`uploads.js`); clips and whole-transcript WAV for History; size limit |
+| `src/transcripts.js` | Saved transcripts: lines with speaker keys and voice prints, full-text search (SQLite FTS5), edits, speaker changes, TXT/SRT/VTT/DOCX/JSON export |
+| `src/docx.js` | A transcript as a Word document: a few Office Open XML parts in a zip written with `zlib` (no dependency) |
+| `src/audio-store.js` | Audio kept with transcripts (`DATA_DIR/audio`, table `transcript_audio`): pieces that each start at a transcript time, live audio encoded to Opus as it arrives (`ws.js`) or an uploaded WAV kept after transcription (`uploads.js`) and converted to Opus in the background (`convert()`, also legacy WAV/PCM pieces at startup); clips and whole-transcript WAV for History, decoded on the fly; `pcm()` for transcribing again; size limit |
+| `src/opus.js` | Ogg Opus writer and reader (16 kHz mono, 32 kbps, 20 ms packets, one-second pages) on `opusscript` (libopus as WebAssembly) |
 | `src/evaluation.js` | Reference parsing, banded word alignment, WER, speaker accuracy by name and after mapping unknown speakers |
 | `public/*.html`, `public/static/js/*.js` | Pages: login, transcript, history (list), history-view (one transcript), voices, users (ES modules) |
 | `public/static/js/pcm-worklet.js` | AudioWorklet: microphone -> 16 kHz mono Int16, windowed-sinc resampler |
@@ -96,7 +98,7 @@ Uploaded files take the same path from step 2 on. *Transcribe a file* (`transcri
 - The VAD's `maxSpeechDuration` is soft: it cuts at the next dip, so utterances can be longer than 15 s. `HISTORY` (40 s) must stay well above that.
 - Interim text is cleared only after the utterance's final is emitted (`partialGen`), so text never disappears from the screen. Keep that order.
 - `transcript_lines.speaker_manual` marks speakers a user chose (`setSpeaker()`: History, live corrections, saving or assigning an unknown speaker). `regroup()` and `moveLines()` never change those lines; keep any new way of setting a speaker by hand going through `setSpeaker()`.
-- Kept audio must stay aligned with line times: a live piece starts at `session.audioSeconds + live.offset` of its first frame and holds exactly the frames pushed to the session, so transcript time t is byte `2 * 16000 * (t - start)` of the piece (the end-to-end test compares a played clip with the streamed audio byte for byte). Any change to `live.offset` (`newTranscript`, `attach`) must end the current piece first (`endPiece()`). An uploaded file's piece starts at its `offset`.
+- Kept audio must stay aligned with line times: a live piece starts at `session.audioSeconds + live.offset` of its first frame and holds exactly the frames pushed to the session, so transcript time t is sample `16000 * (t - start)` of the piece (the end-to-end test compares the loudness of a played clip with the streamed audio every 20 ms). Opus pieces keep this: the OpusHead pre-skip (`PRE_SKIP`) removes the encoder's delay, `end()` encodes one more silent frame so the last samples come out, and the final page's granule position gives the exact length. A file still being written can be read up to its last full page minus the delay (`DELAY`); `wav()` pads whatever a piece lacks with silence so the promised length always holds. A piece's file is swapped to its Opus copy only while nothing holds it (`hold()`, e.g. transcribing again); otherwise the conversion waits for `release()`. Any change to `live.offset` (`newTranscript`, `attach`) must end the current piece first (`endPiece()`). An uploaded file's piece starts at its `offset`.
 - Embeddings are L2-normalized, so `cosine()` is a plain dot product. Normalize any new vector before comparing it.
 - Speaker-embedding work is synchronous native code: ResNet34-LM takes ~16 ms per second of audio at the speaker model's 2 threads (24 ms for a 1.5 s window, twice CAM++). Loops over many embeddings must `await yieldToEventLoop()` between calls; otherwise audio ingestion stalls for every user. For the same reason a final part's voice print is the mean of the 1.5 s windows `speakerTurns()` already embedded (those wholly inside the part; 0.98 cosine to embedding the part again, same margin to other voices), an interim result's is that of the utterance's last 6 s only (`PARTIAL_VOICE`; a print of the whole utterance so far grew with every interim result), and anything else goes through `engine.embedLine()`, which embeds anything longer than 6 s in equal pieces with an event-loop turn between them and averages them (on a 14 s clip 0.997 cosine to the whole-clip print). Never call `embed()` on audio of unbounded length on the main thread: a 15 s line would block it for ~0.24 s.
 - The speaker model is `wespeaker_resnet34_LM_cmn.onnx`: the sherpa-onnx release's `wespeaker_en_voxceleb_resnet34_LM.onnx` with `feature_normalize_type=global-mean` appended to its ONNX metadata (`addMetadata()` in `download-models.js`, which checks the SHA-256 before and after). WeSpeaker models are trained on mean-normalized features (CMN), but the release files lack that entry, and sherpa-onnx 1.13.8 subtracts the mean only when the metadata names it. Without it the voice print follows the loudness (the same speech at −20 dB scored 0.71 against itself) and Czech EER was 17 % instead of 1.34 % (CAM++: 1.72 %). Any other WeSpeaker file needs the same fix; check a new speaker model by embedding the same speech at two volumes (cosine should be ~1.0). The patched file has its own name so that installs re-embed their recordings.
@@ -135,7 +137,7 @@ Uploaded files take the same path from step 2 on. *Transcribe a file* (`transcri
 
 ## Code conventions
 
-- Server: CommonJS with `'use strict'`. Browser: ES modules without bundling. Dependencies: only `express`, `ws` and `sherpa-onnx-node`; don't add one for something a few lines can do.
+- Server: CommonJS with `'use strict'`. Browser: ES modules without bundling. Dependencies: only `express`, `ws`, `sherpa-onnx-node` and `opusscript` (an Opus codec is not a few lines); don't add one for something a few lines can do.
 - 2-space indentation, single quotes, semicolons, trailing commas in multi-line literals. Keep lines under ~120 characters where practical.
 - One JSDoc block per class or public function, explaining *why* rather than restating the code. Constants carry their unit (`sec(0.4)` = samples) and a short reason.
 - Build front-end DOM with `h()` from `common.js` and set user data via text or attributes. Never use `innerHTML` with data (only `icon()` uses it, for fixed SVG).

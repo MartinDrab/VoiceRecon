@@ -319,6 +319,10 @@ export default {
   'It sounds unlike the other recordings of {name} ({score}): is it the same person?':
     'Nezní jako ostatní nahrávky hlasu {name} ({score}): je to stejný člověk?',
 
+  // exports
+  'Subtitles for web video players': 'Titulky pro webové přehrávače videa',
+  'Word document': 'Dokument Wordu',
+
   // transcribing again
   'Transcribe again': 'Přepsat znovu',
   'Transcribe it again from its audio with the current models, voices and names': 'Přepíše ho znovu z jeho zvuku se současnými modely, hlasy a jmény',
