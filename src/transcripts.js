@@ -95,6 +95,10 @@ class TranscriptStore {
     return { voiceId: null, key: '?', label: '?' };
   }
 
+  exists(id) {
+    return Boolean(this.db.prepare('SELECT 1 FROM transcripts WHERE id = ?').get(id));
+  }
+
   get(id) {
     const t = this.db.prepare('SELECT * FROM transcripts WHERE id = ?').get(id);
     if (!t) throw new HttpError(404, 'Transcript not found.');
@@ -261,6 +265,8 @@ class TranscriptStore {
     const first = this.db.prepare(`SELECT transcript_id AS id, text FROM transcript_lines WHERE id IN (
       SELECT MIN(id) FROM transcript_lines WHERE transcript_id IN (${marks}) GROUP BY transcript_id)`).all(...ids);
     const users = new Map(this.db.prepare('SELECT id, username FROM users').all().map((u) => [u.id, u.username]));
+    const withAudio = new Set(this.db.prepare(`SELECT DISTINCT transcript_id AS id FROM transcript_audio
+      WHERE transcript_id IN (${marks})`).all(...ids).map((r) => r.id));
     return rows.map((t) => ({
       id: t.id,
       title: t.title,
@@ -274,6 +280,7 @@ class TranscriptStore {
       user: users.get(t.user_id) || null,
       recording: this.recording.has(t.id),
       processing: this.processing.get(t.id) || null,
+      audio: withAudio.has(t.id), // its lines can be played (audio-store.js)
     }));
   }
 
@@ -359,10 +366,16 @@ class TranscriptStore {
     return m ? translate(lang, 'Speaker {n}', { n: m[1] }) : name;
   }
 
+  /** The name of files made from a transcript, without extension: "transcript-12-2026-10-15". */
+  fileBase(transcriptId) {
+    const t = this.get(transcriptId);
+    return `transcript-${t.id}-${localDateTime(t.started_at).slice(0, 10)}`;
+  }
+
   export(transcriptId, format, lang = 'en') {
     const t = this.get(transcriptId);
     const lines = this.lines(transcriptId);
-    const base = `transcript-${t.id}-${localDateTime(t.started_at).slice(0, 10)}`;
+    const base = this.fileBase(transcriptId);
     if (format === 'txt') {
       const head = `${this.title(t, lang)}\n${localDateTime(t.started_at)}, ${clockOffset(t.duration)}\n\n`;
       const body = lines.map((l) => `[${localTime(l.spokenAt)}] ${this.speakerName(l.speaker.name, lang)}: ${l.text}`).join('\n');

@@ -98,6 +98,20 @@ const MIGRATIONS = [
     INSERT INTO transcript_lines_fts(rowid, text) VALUES (new.id, new.text);
   END;
   `,
+  // Audio of saved transcripts (src/audio-store.js): pieces of 16 kHz mono 16-bit audio in
+  // DATA_DIR/audio, each beginning at start_sec of the transcript; data_start is where the samples
+  // begin in the file (after a WAV header).
+  `
+  CREATE TABLE transcript_audio (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    transcript_id INTEGER NOT NULL REFERENCES transcripts(id) ON DELETE CASCADE,
+    file          TEXT NOT NULL,
+    data_start    INTEGER NOT NULL DEFAULT 0,
+    start_sec     REAL NOT NULL,
+    created_at    INTEGER NOT NULL
+  );
+  CREATE INDEX transcript_audio_transcript ON transcript_audio(transcript_id);
+  `,
 ];
 
 function openDatabase(dataDir) {

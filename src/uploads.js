@@ -93,13 +93,16 @@ function titleFromName(name) {
  *   { state: 'queued' | 'transcribing' | 'failed', done, total }   done/total in seconds of audio
  */
 class UploadQueue {
-  constructor({ dataDir, engine, voices, transcripts }) {
+  /** @param {{ dataDir: string, engine: any, voices: any, transcripts: any, audio?: any }} options
+   *   audio: an AudioStore that keeps the files of transcribed recordings (History plays their lines) */
+  constructor({ dataDir, engine, voices, transcripts, audio = null }) {
     this.dir = path.join(dataDir, 'uploads');
     fs.rmSync(this.dir, { recursive: true, force: true }); // files of a run that was interrupted
     fs.mkdirSync(this.dir, { recursive: true });
     this.engine = engine;
     this.voices = voices;
     this.transcripts = transcripts;
+    this.audio = audio;
     this.waiting = [];
     this.running = null;
   }
@@ -188,6 +191,15 @@ class UploadQueue {
   }
 
   finished(job) {
+    // What was transcribed of the recording is kept with its transcript, so its lines can be played;
+    // the file covers the transcript from the part's start (offset).
+    try {
+      if (this.audio && this.audio.keep && job.status.done > 0 && this.transcripts.exists(job.id)) {
+        this.audio.add(job.id, job.file, { start: job.offset, dataStart: job.dataStart, move: true });
+      }
+    } catch (err) {
+      console.warn(`Transcript ${job.id}: keeping its audio failed: ${err.message}`);
+    }
     fs.rmSync(job.file, { force: true });
     this.transcripts.setRecording(job.id, false);
     if (job.status.state !== 'failed') this.transcripts.processing.delete(job.id);

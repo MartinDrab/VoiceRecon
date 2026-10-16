@@ -310,4 +310,20 @@ export default {
   'Password changed.': 'Heslo bylo změněno.',
   'Password changed. Other sessions were signed out.': 'Heslo bylo změněno. Ostatní přihlášení byla ukončena.',
   'Password changed. {username} was signed out everywhere.': 'Heslo bylo změněno. Uživatel {username} byl všude odhlášen.',
+
+  // audio of transcripts
+  'The audio of the whole transcript': 'Zvuk celého přepisu',
+  'Delete audio': 'Smazat zvuk',
+  'Play this line': 'Přehrát tento řádek',
+  'Stop playing': 'Zastavit přehrávání',
+  'The audio could not be played.': 'Zvuk nejde přehrát.',
+  'Delete the audio of this transcript? Its text stays.': 'Smazat zvuk tohoto přepisu? Text zůstane.',
+  'Audio deleted.': 'Zvuk byl smazán.',
+  'Listening (audio is saved)': 'Poslouchám (zvuk se ukládá)',
+  'Audio of transcripts': 'Zvuk přepisů',
+  'The audio is kept with each transcript, so its lines can be played in History. Beyond the limit, the audio of the oldest transcripts is deleted; their text stays.':
+    'Zvuk se ukládá ke každému přepisu, aby šlo jeho řádky přehrát v Historii. Nad limit se zvuk nejstarších přepisů maže; jejich text zůstává.',
+  'Keep audio': 'Ukládat zvuk',
+  'At most (GB)': 'Nejvýše (GB)',
+  'Audio kept now: {size}.': 'Teď uloženého zvuku: {size}.',
 };

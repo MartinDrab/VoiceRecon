@@ -201,6 +201,8 @@ input[type="range"] { accent-color: var(--accent); }
 .grow { flex: 1; }
 .form-row { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
 .form-row .field { flex: 1; min-width: 140px; }
+.form-row .field.narrow { flex: 0 0 9rem; min-width: 0; }
+.form-row label.check { align-self: center; }
 
 .notice {
   padding: 0.7rem 0.9rem;
@@ -538,7 +540,8 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .hline .text { margin: 0; color: color-mix(in oklab, var(--c) 72%, var(--mix-text)); color: oklch(from var(--c) clamp(var(--voice-l-min), l, var(--voice-l-max)) c h); }
 .hline .edited { color: var(--muted); font-size: 0.78rem; }
 .hline-actions { display: flex; gap: 0.1rem; opacity: 0; transition: opacity 0.12s; }
-.hline:hover .hline-actions, .hline:focus-within .hline-actions { opacity: 1; }
+.hline:hover .hline-actions, .hline:focus-within .hline-actions, .hline.playing .hline-actions { opacity: 1; }
+.hline.playing { background: var(--surface-2); }
 .edit-box { display: flex; flex-direction: column; gap: 0.4rem; grid-column: 2 / 4; }
 .line-editor {
   width: 100%;

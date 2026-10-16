@@ -24,7 +24,8 @@ npm install                          # dependencies (express, ws, sherpa-onnx-no
 npm run models                       # speech models -> models/ (~3 GB download, gitignored)
 npm run models -- --test             # also the two Czech TTS voices used for test audio
 node scripts/make-test-audio.js      # synthetic conversation -> test/fixtures/ (gitignored)
-npm test                             # unit + end-to-end tests (node:test)
+npm test                             # unit + end-to-end tests (node:test), one file at a time: the end-to-end
+                                     # and evaluation tests both need the CPU, and interim results need it idle
 npm run lint                         # ESLint (eslint.config.js)
 npm run typecheck                    # TypeScript checkJs: tsconfig.json (server) + public/tsconfig.json (pages)
 npm run check                        # lint + typecheck + test, as CI runs it
@@ -58,6 +59,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 | `src/db.js` | SQLite (`node:sqlite`), migrations, settings |
 | `src/audio.js` | WAV decode/encode, PCM conversion, windowed-sinc `resample()` |
 | `src/transcripts.js` | Saved transcripts: lines with speaker keys and voice prints, full-text search (SQLite FTS5), edits, speaker changes, TXT/SRT/JSON export |
+| `src/audio-store.js` | Audio kept with transcripts (`DATA_DIR/audio`, table `transcript_audio`): pieces that each start at a transcript time, live PCM written as it arrives (`ws.js`) or an uploaded WAV kept after transcription (`uploads.js`); clips and whole-transcript WAV for History; size limit |
 | `src/evaluation.js` | Reference parsing, banded word alignment, WER, speaker accuracy by name and after mapping unknown speakers |
 | `public/*.html`, `public/static/js/*.js` | Pages: login, transcript, history (list), history-view (one transcript), voices, users (ES modules) |
 | `public/static/js/pcm-worklet.js` | AudioWorklet: microphone -> 16 kHz mono Int16, windowed-sinc resampler |
@@ -91,6 +93,7 @@ Uploaded files take the same path from step 2 on. *Transcribe a file* (`transcri
 - `PAD_BEFORE` exists because the VAD reports speech onsets late; short utterances otherwise lose their first words. `PAD_AFTER` is added only when the VAD is not detecting speech, i.e. after a real pause. `lastSegEnd` records the end of audio already given to the recognizer, so consecutive utterances never share audio.
 - The VAD's `maxSpeechDuration` is soft: it cuts at the next dip, so utterances can be longer than 15 s. `HISTORY` (40 s) must stay well above that.
 - Interim text is cleared only after the utterance's final is emitted (`partialGen`), so text never disappears from the screen. Keep that order.
+- Kept audio must stay aligned with line times: a live piece starts at `session.audioSeconds + live.offset` of its first frame and holds exactly the frames pushed to the session, so transcript time t is byte `2 * 16000 * (t - start)` of the piece (the end-to-end test compares a played clip with the streamed audio byte for byte). Any change to `live.offset` (`newTranscript`, `attach`) must end the current piece first (`endPiece()`). An uploaded file's piece starts at its `offset`.
 - Embeddings are L2-normalized, so `cosine()` is a plain dot product. Normalize any new vector before comparing it.
 - Speaker-embedding work is synchronous native code: ResNet34-LM takes ~16 ms per second of audio at the speaker model's 2 threads (24 ms for a 1.5 s window, twice CAM++). Loops over many embeddings must `await yieldToEventLoop()` between calls; otherwise audio ingestion stalls for every user. For the same reason a final part's voice print is the mean of the 1.5 s windows `speakerTurns()` already embedded (those wholly inside the part; 0.98 cosine to embedding the part again, same margin to other voices), an interim result's is that of the utterance's last 6 s only (`PARTIAL_VOICE`; a print of the whole utterance so far grew with every interim result), and anything else goes through `engine.embedLine()`, which embeds anything longer than 6 s in equal pieces with an event-loop turn between them and averages them (on a 14 s clip 0.997 cosine to the whole-clip print). Never call `embed()` on audio of unbounded length on the main thread: a 15 s line would block it for ~0.24 s.
 - The speaker model is `wespeaker_resnet34_LM_cmn.onnx`: the sherpa-onnx release's `wespeaker_en_voxceleb_resnet34_LM.onnx` with `feature_normalize_type=global-mean` appended to its ONNX metadata (`addMetadata()` in `download-models.js`, which checks the SHA-256 before and after). WeSpeaker models are trained on mean-normalized features (CMN), but the release files lack that entry, and sherpa-onnx 1.13.8 subtracts the mean only when the metadata names it. Without it the voice print follows the loudness (the same speech at −20 dB scored 0.71 against itself) and Czech EER was 17 % instead of 1.34 % (CAM++: 1.72 %). Any other WeSpeaker file needs the same fix; check a new speaker model by embedding the same speech at two volumes (cosine should be ~1.0). The patched file has its own name so that installs re-embed their recordings.

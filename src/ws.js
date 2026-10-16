@@ -33,9 +33,10 @@ function sameOrigin(req) {
  *
  * Final lines are saved to a transcript (see transcripts.js): 'start' may name the transcript to
  * continue (after a reconnect or page reload); otherwise one is created with the first line and
- * announced with { type: 'transcript', id }. 'newTranscript' starts a fresh one.
+ * announced with { type: 'transcript', id }. 'newTranscript' starts a fresh one. When audio is kept
+ * (audio-store.js), the microphone audio is saved with the transcript too.
  */
-function attachWebSocket(server, { auth, engine, voices, transcripts }) {
+function attachWebSocket(server, { auth, engine, voices, transcripts, audio = null }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   const clients = new Map(); // open connection -> () => its language
 
@@ -83,6 +84,38 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
     const live = { transcriptId: null, offset: 0, floor: 0, sessionNo: 1, lineIds: new Map() };
     let toldLoading = false; // audio arrived while the models were loading, and the client was told
 
+    // The audio kept for the transcript: one piece per stretch of this connection that writes to one
+    // transcript (start: the transcript time of its first sample). A new transcript exists only from
+    // its first line on, so the piece is added to it then.
+    let piece = null; // { writer, start, transcriptId }
+    const endPiece = () => {
+      if (piece) piece.writer.end();
+      piece = null;
+    };
+    const bindPiece = (transcriptId) => {
+      if (!piece) return;
+      if (piece.transcriptId !== null) {
+        if (piece.transcriptId !== transcriptId) endPiece();
+        return;
+      }
+      piece.transcriptId = transcriptId;
+      try {
+        audio.add(transcriptId, piece.writer.name, { start: piece.start });
+      } catch (err) {
+        console.error('Could not keep the audio:', err.message);
+        endPiece();
+      }
+    };
+    const keepAudio = (pcm) => {
+      if (!audio) return;
+      if (!piece) {
+        if (!audio.keep) return;
+        piece = { writer: audio.startLive(), start: session.audioSeconds + live.offset, transcriptId: null };
+        if (live.transcriptId) bindPiece(live.transcriptId);
+      }
+      piece.writer.write(pcm);
+    };
+
     const setTranscript = (id) => {
       transcripts.setRecording(live.transcriptId, false);
       live.transcriptId = id;
@@ -93,6 +126,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       if (live.transcriptId || !isId(transcriptId)) return;
       const t = transcripts.resume(transcriptId, user);
       if (!t) return;
+      endPiece(); // audio before this belongs to no transcript; the next comes at the new times
       setTranscript(t.id);
       live.sessionNo = t.sessions;
       live.offset = t.duration + 1 - (session ? session.audioSeconds : 0);
@@ -104,6 +138,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
     const startNew = () => {
       const t = transcripts.create(user.id);
       setTranscript(t.id);
+      bindPiece(t.id);
       live.sessionNo = 1;
       live.lineIds.clear();
       send({ type: 'transcript', id: t.id });
@@ -175,7 +210,9 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       return session;
     };
 
-    send({ type: 'hello', user, ready: engine.ready, error: engine.loadError && tr(engine.loadError) });
+    send({
+      type: 'hello', user, ready: engine.ready, error: engine.loadError && tr(engine.loadError), keepAudio: Boolean(audio && audio.keep),
+    });
     ws.send(voicesMessage());
 
     // Exceptions thrown from this listener would be uncaught and stop the server.
@@ -190,7 +227,9 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
     function onMessage(data, isBinary) {
       if (isBinary) {
         const s = ensureSession({ audio: true });
-        if (s) s.push(int16ToFloat(data));
+        if (!s) return;
+        keepAudio(data);
+        s.push(int16ToFloat(data));
         return;
       }
       let msg = null;
@@ -205,6 +244,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
       if (msg.type === 'start') {
         if (ensureSession()) attach(msg.transcriptId);
       } else if (msg.type === 'newTranscript') {
+        endPiece();
         setTranscript(null);
         live.offset = -(session ? session.audioSeconds : 0);
         live.floor = 0;
@@ -259,6 +299,7 @@ function attachWebSocket(server, { auth, engine, voices, transcripts }) {
     ws.on('close', () => {
       clearInterval(timer);
       clients.delete(ws);
+      endPiece();
       setTranscript(null);
       if (session) session.close();
     });

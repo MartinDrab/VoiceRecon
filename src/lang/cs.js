@@ -56,6 +56,10 @@ module.exports = {
   'That speaker is no longer available in this session.': 'Tento mluvčí už v této relaci není k dispozici.',
   'That speaker is being saved as a new voice.': 'Tento mluvčí se právě ukládá jako nový hlas.',
   'The start of the part must be a number of seconds.': 'Začátek části musí být počet sekund.',
+  'This transcript has no audio.': 'Tento přepis nemá zvuk.',
+  'Invalid time.': 'Neplatný čas.',
+  'Only the author or an administrator can delete this audio.': 'Tento zvuk může smazat jen autor nebo správce.',
+  'The limit must be between {min} and {max} GB.': 'Limit musí být mezi {min} a {max} GB.',
 
   // saved transcripts
   'Transcript not found.': 'Přepis nebyl nalezen.',

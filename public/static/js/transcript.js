@@ -24,6 +24,7 @@ let pendingEl = null;
 let ws = null;
 let epoch = Date.now(); // identifies the server-side session that unknown speaker ids belong to
 let modelsReady = false;
+let audioKept = false; // the server saves the microphone audio with the transcript
 let listening = false;
 let stopping = false;
 let mic = null;
@@ -268,7 +269,7 @@ function refreshStatus() {
   if (!open) setStatus(listening ? t('Reconnecting… (audio is not being sent)') : t('Connecting…'), 'wait');
   else if (!modelsReady) setStatus(t('Loading speech models…'), 'wait');
   else if (stopping) setStatus(t('Finishing…'), 'wait');
-  else if (listening) setStatus(t('Listening'), 'live');
+  else if (listening) setStatus(audioKept ? t('Listening (audio is saved)') : t('Listening'), 'live');
   else setStatus(t('Ready'), 'ready');
   if (!listening) $('level').style.width = '0';
 }
@@ -293,6 +294,8 @@ function connect() {
     const msg = JSON.parse(e.data);
     switch (msg.type) {
       case 'hello':
+        audioKept = Boolean(msg.keepAudio);
+      // falls through
       case 'status':
         modelsReady = msg.ready;
         if (msg.error) toast(t('Speech models failed to load: {error}', { error: msg.error }), { error: true });

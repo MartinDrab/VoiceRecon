@@ -15,6 +15,7 @@ const { SpeechEngine } = require('./speech/engine');
 const { VoiceManager } = require('./voices');
 const { TranscriptStore } = require('./transcripts');
 const { UploadQueue } = require('./uploads');
+const { AudioStore } = require('./audio-store');
 const { attachWebSocket } = require('./ws');
 
 const PUBLIC = path.join(config.root, 'public');
@@ -25,7 +26,9 @@ const auth = new Auth(db, { sessionTtlHours: config.sessionTtlHours, secureCooki
 const engine = new SpeechEngine(config);
 const voices = new VoiceManager(db, engine, { dataDir: config.dataDir, defaultThreshold: config.speakerThreshold });
 const transcripts = new TranscriptStore(db, voices);
-const uploads = new UploadQueue({ dataDir: config.dataDir, engine, voices, transcripts });
+const audio = new AudioStore(db, config.dataDir);
+audio.init();
+const uploads = new UploadQueue({ dataDir: config.dataDir, engine, voices, transcripts, audio });
 // The recognizer prefers the voices' names and the vocabulary from the Voices page.
 const syncHotwords = () => engine.ready && engine.setHotwords(voices.hotwords());
 voices.on('changed', syncHotwords);
@@ -215,6 +218,11 @@ api.put('/settings/vocabulary', admin, json, (req, res) => {
   voices.setVocabulary(req.body.words);
   res.json({ vocabulary: voices.vocabulary });
 });
+// Whether the audio of transcripts is kept (to play lines in History), and at most how much.
+api.get('/settings/audio', admin, (_req, res) => res.json(audio.settings()));
+api.put('/settings/audio', admin, json, (req, res) => {
+  res.json(audio.setSettings({ keep: req.body.keep, limitGb: req.body.limitGb }));
+});
 
 // saved transcripts (everyone can read and edit; deleting is for the author and administrators)
 api.get('/transcripts', user, (req, res) => {
@@ -253,8 +261,29 @@ api.delete('/transcripts/:id', user, async (req, res) => {
   const t = ownTranscript(req);
   if (!t) throw new HttpError(403, 'Only the author or an administrator can delete this transcript.');
   await uploads.cancel(t.id);
+  audio.remove(t.id);
   transcripts.remove(t.id);
   res.json({ ok: true });
+});
+// The transcript's audio as a WAV file: ?start=&end= (seconds) for a part of it, e.g. one line;
+// ?download=1 to save it as a file.
+api.get('/transcripts/:id/audio', user, async (req, res) => {
+  const tid = id(req.params.id);
+  const time = (v) => {
+    if (v === undefined) return undefined;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) throw new HttpError(400, 'Invalid time.');
+    return n;
+  };
+  const from = time(req.query.start);
+  const to = time(req.query.end);
+  const filename = req.query.download ? `${transcripts.fileBase(tid)}.wav` : undefined;
+  await audio.send(res, tid, { from, to, filename });
+});
+api.delete('/transcripts/:id/audio', user, (req, res) => {
+  const t = ownTranscript(req);
+  if (!t) throw new HttpError(403, 'Only the author or an administrator can delete this audio.');
+  res.json({ deleted: audio.remove(t.id) });
 });
 api.patch('/transcripts/:id/lines/:lineId', user, json, (req, res) => {
   transcripts.updateText(id(req.params.id), id(req.params.lineId), req.body.text);
@@ -304,7 +333,7 @@ app.use((err, req, res, _next) => {
 const server = tls
   ? https.createServer({ cert: fs.readFileSync(config.tlsCert), key: fs.readFileSync(config.tlsKey) }, app)
   : http.createServer(app);
-const ws = attachWebSocket(server, { auth, engine, voices, transcripts });
+const ws = attachWebSocket(server, { auth, engine, voices, transcripts, audio });
 
 server.listen(config.port, config.host, () => {
   const shownHost = config.host === '0.0.0.0' || config.host === '::' ? 'localhost' : config.host;

@@ -1,4 +1,4 @@
-import { api, h, icon, toast, initPage, t, locale } from './common.js';
+import { api, h, icon, toast, initPage, t, locale, formatNumber } from './common.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
@@ -89,6 +89,27 @@ $('add-form').addEventListener('submit', async (e) => {
   }
 });
 
+// ---------- audio of transcripts ----------
+
+function showAudio(s) {
+  $('keep-audio').checked = s.keep;
+  $('audio-limit').value = String(s.limitGb);
+  const gb = s.usedBytes / 1024 ** 3;
+  const size = gb >= 1 ? `${formatNumber(gb, 1)} GB` : `${formatNumber(Math.ceil(s.usedBytes / 1024 ** 2), 0)} MB`;
+  $('audio-used').textContent = t('Audio kept now: {size}.', { size });
+}
+
+$('audio-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('audio-error').textContent = '';
+  try {
+    showAudio(await api('/settings/audio', { method: 'PUT', body: { keep: $('keep-audio').checked, limitGb: Number($('audio-limit').value) } }));
+    toast(t('Saved.'));
+  } catch (err) {
+    $('audio-error').textContent = err.message;
+  }
+});
+
 $('password-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
@@ -115,6 +136,7 @@ initPage('users').then(async (user) => {
   if (user.role === 'admin') {
     $('admin-section').classList.remove('hidden');
     await loadUsers();
+    showAudio(await api('/settings/audio'));
   } else {
     $('account-section').classList.remove('mt');
   }

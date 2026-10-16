@@ -89,6 +89,9 @@ function renderHeader() {
   $('meta').replaceChildren(...[meta.join(' · '), statusBadge(transcript)].filter(Boolean));
   $('speakers').replaceChildren(...transcript.speakers.map((s) => h('span.chip', { style: { '--c': speakerColor(s) } }, `${speakerLabel(s.name)} · ${s.lines}`)));
   for (const f of ['txt', 'srt', 'json']) $(`export-${f}`).href = `/api/transcripts/${tid}/export?format=${f}`;
+  $('export-wav').href = `/api/transcripts/${tid}/audio?download=1`;
+  $('export-wav').classList.toggle('hidden', !transcript.audio);
+  $('delete-audio').classList.toggle('hidden', !(transcript.audio && mayDelete()));
   $('delete').classList.toggle('hidden', !mayDelete());
   $('stop').classList.toggle('hidden', !(isProcessing() && mayDelete()));
   if (query) $('back').href = `/history?q=${encodeURIComponent(query)}`;
@@ -119,13 +122,61 @@ function lineRow(line) {
   const text = line.id === editing
     ? editor(line)
     : h('p.text', {}, highlight(line.text, query), line.edited ? h('span.edited', {}, ` ${t('(edited)')}`) : null);
-  return h('div.hline', { id: `line-${line.id}` },
+  const playing = Boolean(player && player.lineId === line.id);
+  return h(`div.hline${playing ? '.playing' : ''}`, { id: `line-${line.id}` },
     h('span.time', { title: new Date(line.spokenAt).toLocaleTimeString(locale) }, formatClock(line.start)),
     text,
     line.id === editing ? null : h('div.hline-actions', {},
+      transcript.audio ? h('button.btn.btn-ghost.btn-icon.btn-sm', {
+        title: playing ? t('Stop playing') : t('Play this line'),
+        'aria-pressed': String(playing),
+        onclick: () => playLine(line),
+      }, icon(playing ? 'stop' : 'play')) : null,
       h('button.btn.btn-ghost.btn-icon.btn-sm', { title: t('Change who said this line'), onclick: () => openSpeaker([line.id], line.speaker) }, icon('person')),
       h('button.btn.btn-ghost.btn-icon.btn-sm', { title: t('Fix the text'), onclick: () => startEdit(line.id) }, icon('edit')),
       h('button.btn.btn-ghost.btn-icon.btn-sm.btn-danger', { title: t('Delete the line'), onclick: () => deleteLine(line) }, icon('trash'))));
+}
+
+// ---------- playing lines ----------
+
+let player = null; // { audio: HTMLAudioElement, lineId } while a line plays
+
+function refreshLine(lineId) {
+  const el = document.getElementById(`line-${lineId}`);
+  const line = lines.find((l) => l.id === lineId);
+  if (el && line && line.id !== editing) el.replaceWith(lineRow(line));
+}
+
+function stopPlaying() {
+  if (!player) return;
+  const { audio, lineId } = player;
+  player = null;
+  audio.pause();
+  audio.removeAttribute('src');
+  refreshLine(lineId);
+}
+
+/** Plays a line from the transcript's audio; the same line again stops it. */
+function playLine(line) {
+  const again = player && player.lineId === line.id;
+  stopPlaying();
+  if (again) return;
+  // A little more on both sides: a line's first and last sounds are often right at its edges.
+  const from = Math.max(0, line.start - 0.2).toFixed(2);
+  const to = (line.end + 0.3).toFixed(2);
+  const audio = new Audio(`/api/transcripts/${tid}/audio?start=${from}&end=${to}`);
+  const current = () => player && player.audio === audio;
+  player = { audio, lineId: line.id };
+  audio.addEventListener('ended', () => {
+    if (current()) stopPlaying();
+  });
+  audio.addEventListener('error', () => {
+    if (!current()) return;
+    stopPlaying();
+    toast(t('The audio could not be played.'), { error: true });
+  });
+  audio.play().catch(() => {}); // a failure also arrives as the 'error' event
+  refreshLine(line.id);
 }
 
 // ---------- editing text ----------
@@ -256,6 +307,17 @@ $('stop').addEventListener('click', async () => {
   stopping = false;
 });
 $('refresh').addEventListener('click', () => load().catch((err) => toast(err.message, { error: true })));
+$('delete-audio').addEventListener('click', async () => {
+  if (!confirm(t('Delete the audio of this transcript? Its text stays.'))) return;
+  try {
+    stopPlaying();
+    await api(`/transcripts/${tid}/audio`, { method: 'DELETE' });
+    await load();
+    toast(t('Audio deleted.'));
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
+});
 $('delete').addEventListener('click', async () => {
   const question = plural(transcript.lines, 'Delete “{title}” with its {n} line? This cannot be undone.',
     'Delete “{title}” with all its {n} lines? This cannot be undone.', { title: transcriptTitle(transcript) });

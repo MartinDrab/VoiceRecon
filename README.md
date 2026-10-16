@@ -43,11 +43,14 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 2.
   - Fix a line's text: pencil, then <kbd>Enter</kbd> to save.
   - Delete a line.
   - Change who spoke: click a name or a line's person icon, then choose a voice or type any name, for that line, that turn, or every line of that speaker. Moving lines to a voice also teaches the voice how they sounded, as corrections on the transcript page do.
-  - Export as **TXT** (`[time] Name: text`, usable as an evaluation reference), **SRT** subtitles or **JSON**.
+  - Play a line: the play button next to it plays that line from the transcript's audio (while audio is kept, see below).
+  - Export as **TXT** (`[time] Name: text`, usable as an evaluation reference), **SRT** subtitles or **JSON**, and the audio as **WAV**.
+  - *Delete audio* deletes only the audio; the text stays.
   - A transcript that is still being recorded updates itself.
   - Everyone signed in can read and edit transcripts; deleting one is for its author and administrators.
 - **Light and dark themes**: by default VoiceRecon follows the operating system. The sun/moon/monitor button in the top bar (and *Theme* in the transcript page's menu, or the button in the corner of the sign-in page) switches between *System*, *Light* and *Dark*; the choice is remembered in the browser. Speaker colors are adjusted for each theme so that text in any voice color stays readable.
 - **Users page** (`/users`): administrators add users, set passwords, change roles and delete users. Every user can change their own password there.
+- **Audio of transcripts**: the audio of every transcript is kept with it, so History can play its lines: the microphone audio of live listening (the Transcript page says *Listening (audio is saved)*) and uploaded recordings. It takes about 115 MB per hour (16 kHz WAV) in `DATA_DIR/audio`. Administrators can turn this off and set the most audio to keep (10 GB by default, about 87 hours) on the Users page; beyond it, the audio of the oldest transcripts is deleted and their text stays. Deleting a transcript deletes its audio.
 - **Czech and English**: the pages, messages and exports follow the browser's language (Czech or Slovak gives Czech, anything else English). The **CS**/**EN** button in the top bar (*Čeština*/*English* in the transcript page's menu, or the button in the corner of the sign-in page) switches it; the choice is remembered by the browser. Saved data does not change: unknown speakers show as *Mluvčí 2* in Czech and *Speaker 2* in English.
 
 ## Requirements

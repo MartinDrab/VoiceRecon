@@ -189,6 +189,19 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     const srt = await (await fetch(`${base}/api/transcripts/${transcriptId}/export?format=srt`, { headers: { cookie } })).text();
     assert.strictEqual(srt.match(/-->/g).length, expected.length);
 
+    // its audio was kept: a clip is exactly what was streamed at those times
+    assert.strictEqual(saved.transcript.audio, true);
+    const clip = async (tid, from, to) => {
+      const res = await fetch(`${base}/api/transcripts/${tid}/audio?start=${from}&end=${to}`, { headers: { cookie } });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.headers.get('content-type'), 'audio/wav');
+      return Buffer.from(await res.arrayBuffer()).subarray(44);
+    };
+    assert.ok((await clip(transcriptId, 2, 4)).equals(pcm.subarray(2 * 32000, 4 * 32000)), 'the kept audio, at its times');
+    const audioSettings = await call('GET', '/api/settings/audio');
+    assert.deepStrictEqual([audioSettings.keep, audioSettings.limitGb], [true, 10]);
+    assert.ok(audioSettings.usedBytes >= pcm.length);
+
     // a reconnecting page continues the same transcript; "New transcript" starts another
     const fresh = next('transcript');
     ws.send(JSON.stringify({ type: 'newTranscript' }));
@@ -215,6 +228,7 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     }
     await call('DELETE', `/api/transcripts/${transcriptId}`);
     assert.strictEqual((await fetch(`${base}/api/transcripts/${transcriptId}`, { headers: { cookie } })).status, 404);
+    assert.deepStrictEqual(fs.readdirSync(path.join(dataDir, 'audio')), [], 'its audio went with it');
 
     assert.strictEqual((await call('GET', '/api/voices')).learnFromSpeech, false);
     await call('PUT', '/api/settings/learn', { enabled: true });
@@ -255,6 +269,15 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.strictEqual((await fetch(`${base}/api/transcripts/upload?offset=-5`, { method: 'POST', headers: { cookie, 'content-type': 'audio/wav' }, body: recording })).status, 400);
     assert.deepStrictEqual(await learnedOf('jirka'), learnedBefore, 'uploaded recordings do not teach the voices');
     assert.deepStrictEqual(fs.readdirSync(path.join(dataDir, 'uploads')), [], 'the uploaded file is removed');
+    // ... and kept as the transcript's audio, from where the part starts
+    assert.strictEqual(file.transcript.audio, true);
+    assert.ok((await clip(fileId, offset + 2, offset + 4)).equals(recording.subarray(44 + 2 * 32000, 44 + 4 * 32000)));
+    const whole = await fetch(`${base}/api/transcripts/${fileId}/audio?download=1`, { headers: { cookie } });
+    assert.match(whole.headers.get('content-disposition'), /^attachment; filename="transcript-\d+-[\d-]+\.wav"$/);
+    assert.strictEqual((await whole.arrayBuffer()).byteLength, recording.length, 'the whole recording, from the part\'s start');
+    assert.deepStrictEqual(await call('DELETE', `/api/transcripts/${fileId}/audio`), { deleted: true });
+    assert.strictEqual((await call('GET', `/api/transcripts/${fileId}`)).transcript.audio, false);
+    assert.strictEqual((await fetch(`${base}/api/transcripts/${fileId}/audio`, { headers: { cookie } })).status, 404);
 
     // stopping keeps what was transcribed so far; other WAV formats are refused without a transcript
     const stopId = (await uploadFile({ name: 'stop.wav' })).id;
