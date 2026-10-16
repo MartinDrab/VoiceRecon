@@ -20,7 +20,7 @@ VoiceRecon is a single Node.js server with a plain HTML/JS front end. All speech
 | Component | Where | Technology |
 |---|---|---|
 | Voice Transcriber | [src/transcriber.js](src/transcriber.js), [src/speech/engine.js](src/speech/engine.js) | [Silero VAD](https://github.com/snakers4/silero-vad) cuts the stream into utterances; [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) transcribes them, with its full-precision encoder (the int8 one made twice as many errors in Czech) and the int8 decoder and joiner. It covers 25 European languages including **Czech and English** and detects the language by itself. |
-| Voice Manager | [src/voices.js](src/voices.js) | [CAM++](https://github.com/modelscope/3D-Speaker) speaker embeddings (voice prints). Each voice's recordings are averaged into a voice print that live speech is compared against (cosine similarity). |
+| Voice Manager | [src/voices.js](src/voices.js) | [WeSpeaker](https://github.com/wenet-e2e/wespeaker) ResNet34-LM speaker embeddings (voice prints), see [Speaker model](#speaker-model). Each voice's recordings are averaged into a voice print that live speech is compared against (cosine similarity). |
 | Web Interface | [public/](public/), [src/server.js](src/server.js), [src/ws.js](src/ws.js) | Express + WebSocket. The browser captures the microphone, converts it to 16 kHz PCM in an AudioWorklet and streams it to the server. |
 | Users & login | [src/auth.js](src/auth.js) | SQLite (`node:sqlite`), scrypt password hashes, HTTP-only session cookies. |
 
@@ -105,6 +105,14 @@ the speech models fail to load with a message that `encoder.onnx` and `encoder.w
 Afterwards `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/encoder.int8.onnx` is no longer used
 and can be deleted (650 MB).
 
+Older versions also used a different speaker model, CAM++ (see [Speaker model](#speaker-model)).
+`start.cmd` and `./start.sh` download the new one (27 MB) on the next start; with `npm start`, run
+`npm run models` first. On the first start with it, the voice prints are recomputed from the saved
+recordings (a few seconds), lines learned from live speech and corrections are dropped and learned
+again, and a match threshold saved on the Voices page no longer applies: it was chosen for the old
+model, so the new default 0.6 is used until you set another one. `models/3dspeaker_campplus_zh_en_advanced.onnx`
+is then no longer used; keep it if you want to switch back with `SPEAKER_MODEL`.
+
 ### Using it from other devices (phone, another PC)
 
 Browsers only allow microphone access on `https://` pages or on `localhost`. To use VoiceRecon over
@@ -139,8 +147,8 @@ TLS_KEY=data/key.pem
 | `DATA_DIR` | `./data` | Database and voice recordings |
 | `MODELS_DIR` | `./models` | Speech models |
 | `THREADS` | CPU cores, max 4 | Threads for speech recognition |
-| `SPEAKER_MODEL` | `3dspeaker_campplus_zh_en_advanced.onnx` | Speaker-embedding model file in `MODELS_DIR` |
-| `SPEAKER_THRESHOLD` | `0.5` | Initial match threshold (later changed on the Voices page) |
+| `SPEAKER_MODEL` | `wespeaker_resnet34_LM_cmn.onnx` | Speaker-embedding model file in `MODELS_DIR`; `3dspeaker_campplus_zh_en_advanced.onnx` is the older CAM++ (`npm run models` downloads the one named here) |
+| `SPEAKER_THRESHOLD` | `0.6` | Initial match threshold (later changed on the Voices page; a saved threshold counts only for the speaker model it was set with) |
 | `SESSION_TTL_HOURS` | `168` | How long a login lasts |
 | `VOICERECON_DEBUG` | — | `1` logs every utterance and saves its audio to `%TEMP%/voicerecon-debug` |
 
@@ -176,6 +184,40 @@ differs from where the recordings were made. Check it on your own recordings wit
 
 Voice prints are recomputed automatically from the stored recordings if the speaker model is
 changed (`SPEAKER_MODEL`); learned lines are dropped then, because they have no audio to recompute from.
+A match threshold saved on the Voices page applies only to the model it was set with; another model
+starts from the default (`SPEAKER_THRESHOLD`), because its scores are on a different scale.
+
+### Speaker model
+
+Voice prints come from WeSpeaker's ResNet34-LM (trained on VoxCeleb), chosen by comparing five
+models on Czech speech: 52 speakers of the European Parliament (VoxPopuli), 1.5, 3 and 6 s segments,
+10 of them enrolled at a time; the others must stay unknown, which is the hard part.
+
+| Model | Equal error rate | Not enrolled, but named (1.5 / 3 / 6 s) | Enrolled, named correctly | CPU per 1.5 s voice print |
+|---|---:|---|---|---:|
+| ResNet34-LM, threshold 0.6 (now) | 1.34 % | 0.6 / 1.1 / 1.8 % | 78 / 96 / 99 % | 24 ms |
+| CAM++, threshold 0.5 (before) | 1.72 % | 12 / 21 / 33 % | 94 / 99 / 100 % | 12 ms |
+| CAM++, threshold 0.6 | 1.72 % | 0.9 / 1.9 / 4.0 % | 80 / 95 / 99 % | 12 ms |
+
+At the same threshold ResNet34-LM gives about half the false names of CAM++. The threshold matters
+even more: at 0.5, CAM++ gave a third of the 6 s segments of people who were not enrolled
+someone's name. At 0.6, what is lost on very short lines becomes *unknown*, not a wrong name;
+enrolled people almost never get another person's name (≤ 0.1 %). 0.55 is a balanced choice
+if unknown short lines bother you more than an occasional false name.
+
+As published, the WeSpeaker model files do not say that their features must be mean-normalized,
+and sherpa-onnx then skips that step: the voice print follows the loudness, and the error rate
+was 17 %. `npm run models` therefore downloads the file, checks it, adds that one setting to its
+metadata and saves it as `wespeaker_resnet34_LM_cmn.onnx`. The model needs twice the CPU of
+CAM++: its voice prints take about 6 % of the time someone is speaking (CAM++: 3 %).
+
+On a test conversation put together from the recordings of four real voices, both models kept
+everyone apart when there was a pause of half a second between turns, with each person in turn
+not enrolled. With shorter pauses, turns run together into one utterance; there CAM++ gave 23 and
+35 % of two people's words to someone else when they were not enrolled, and ResNet34-LM gave
+none, while for the other two people both models made the same mistake (see
+[Known limitations](#known-limitations)). Your own meetings are the real test: measure them with
+`npm run evaluate` (below).
 
 ## Measuring accuracy on your own recordings
 
@@ -232,7 +274,7 @@ To compare settings, give several values. Every combination is a separate run; r
 results are reused when only speaker settings change, so threshold sweeps are fast:
 
 ```bash
-npm run evaluate -- my-meeting --app-voices --threshold 0.4,0.5,0.6 --min-silence 0.25,0.35
+npm run evaluate -- my-meeting --app-voices --threshold 0.5,0.55,0.6,0.65 --min-silence 0.25,0.35
 ```
 
 | Option | Meaning |
@@ -289,6 +331,7 @@ test/         unit and end-to-end tests; test/fixtures (generated) is also an ev
 ## Known limitations
 
 - Very short utterances (under about one second, e.g. "ano", "jo") are too short to recognize the voice reliably. They are attributed to the previous speaker. When people answer each other without a pause, a turn shorter than about 1.5 s stays in the neighbouring line.
+- When a person without a saved voice and a saved voice take turns without pausing (less than about a third of a second), and the person without a voice speaks both before and after, the whole stretch can be credited to the saved voice: the split into speakers looks for one person taking over from another, and there both halves contain the same unknown voice.
 - A word list helps only words that sound close to what is listed: "Andrew Sharp" said the Czech way still came out as "Andru Šárp".
 - People talking over each other at the same time are not separated; the louder voice usually wins.
 - Accuracy depends on the microphone. A single microphone in the middle of the table works, but a distant laptop microphone in an echoing room makes both transcription and voice matching worse.

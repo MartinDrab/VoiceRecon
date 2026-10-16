@@ -40,7 +40,11 @@ const asr = {
   tokens: path.join(asrDir, 'tokens.txt'),
 };
 const vadModel = path.join(modelsDir, 'silero_vad.onnx');
-const speakerModel = path.join(modelsDir, process.env.SPEAKER_MODEL || '3dspeaker_campplus_zh_en_advanced.onnx');
+// WeSpeaker ResNet34-LM with mean normalization added to its metadata (scripts/download-models.js
+// says why). On Czech (VoxPopuli, 52 speakers) its equal error rate was 1.34 % against 1.72 % for
+// CAM++, with about half the false names at the same accuracy, for twice the CPU (24 ms per 1.5 s
+// voice print at 2 threads). CAM++ (3dspeaker_campplus_zh_en_advanced.onnx) is the alternative.
+const speakerModel = path.join(modelsDir, process.env.SPEAKER_MODEL || 'wespeaker_resnet34_LM_cmn.onnx');
 
 module.exports = {
   root,
@@ -62,8 +66,11 @@ module.exports = {
   modelFiles: [asr.encoder, asr.encoderWeights, asr.decoder, asr.joiner, asr.tokens, vadModel, speakerModel],
 
   // Default cosine-similarity threshold for accepting a voice match (also for joining an unknown
-  // speaker). Can be changed at runtime from the Voices page (stored in the database). 0.5 rather
-  // than 0.4: on real recordings different people scored up to 0.5 against each other, and at 0.4
-  // a person who was not enrolled got some lines of an enrolled voice.
-  speakerThreshold: num('SPEAKER_THRESHOLD', 0.5),
+  // speaker). Can be changed at runtime from the Voices page (stored in the database, for the
+  // speaker model it was set with). 0.6 for ResNet34-LM: on Czech parliament speakers with 10
+  // enrolled voices, people who were not enrolled got a name for 0.6 / 1.1 / 1.8 % of their
+  // 1.5 / 3 / 6 s segments (5 / 10 / 16 % at 0.5), while enrolled speakers were named correctly for
+  // 78 / 96 / 99 %; what is lost at 1.5 s becomes "unknown", not a wrong name. CAM++ at 0.5 gave
+  // 12 / 21 / 33 % false names, like the real recordings where different people scored up to 0.5.
+  speakerThreshold: num('SPEAKER_THRESHOLD', 0.6),
 };

@@ -13,7 +13,7 @@ native addon):
 
 - **Silero VAD** cuts the stream into utterances.
 - **Parakeet TDT 0.6B v3** (fp32 encoder, int8 decoder and joiner) does speech-to-text. It covers Czech, English and 23 other languages, and detects the language automatically; `result.lang` is always empty.
-- **CAM++** (3D-Speaker) computes speaker embeddings (voice prints).
+- **WeSpeaker ResNet34-LM** computes speaker embeddings (voice prints), with one metadata entry added so that sherpa-onnx normalizes its features (see Invariants).
 
 The UI is in English and Czech (chosen per browser); the transcribed speech is mainly Czech.
 
@@ -51,7 +51,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 | `src/uploads.js` | Uploaded recordings: streamed to `DATA_DIR/uploads`, transcribed one at a time in the background into a new transcript |
 | `src/transcriber.js` | **Voice Transcriber**: VAD segmentation, interim/final results, speaker-change splitting, unknown-speaker clustering |
 | `src/voices.js` | **Voice Manager**: voices, recordings, voice prints (average, per recording, learned), `identify()`, learning from live speech and corrections |
-| `src/speech/engine.js` | Loads the models; ASR job queue (beam search with names and terms, `setHotwords`); `embed`, `embedLong`, `speechOnly`, `resample` |
+| `src/speech/engine.js` | Loads the models; ASR job queue (beam search with names and terms, `setHotwords`); `embed`, `embedLine`, `embedLong`, `speechOnly`, `resample` |
 | `src/speech/voice-worker.js` | Worker thread for voice prints of whole recordings (`engine.analyzeRecording()`): decode, resample, find speech, embed, encode |
 | `src/auth.js` | Users, scrypt hashes, sessions, login throttling, Express guards |
 | `src/db.js` | SQLite (`node:sqlite`), migrations, settings |
@@ -91,12 +91,15 @@ Uploaded files take the same path from step 2 on. *Transcribe a file* (`transcri
 - The VAD's `maxSpeechDuration` is soft: it cuts at the next dip, so utterances can be longer than 15 s. `HISTORY` (40 s) must stay well above that.
 - Interim text is cleared only after the utterance's final is emitted (`partialGen`), so text never disappears from the screen. Keep that order.
 - Embeddings are L2-normalized, so `cosine()` is a plain dot product. Normalize any new vector before comparing it.
-- Speaker-embedding work is synchronous native code (~10–30 ms per call). Loops over many embeddings must `await yieldToEventLoop()` between calls; otherwise audio ingestion stalls for every user.
+- Speaker-embedding work is synchronous native code: ResNet34-LM takes ~16 ms per second of audio at the speaker model's 2 threads (24 ms for a 1.5 s window, twice CAM++). Loops over many embeddings must `await yieldToEventLoop()` between calls; otherwise audio ingestion stalls for every user. For the same reason a line's voice print (finals and interim results) goes through `engine.embedLine()`, which embeds anything longer than 6 s in equal pieces with an event-loop turn between them and averages them (on a 14 s clip 0.997 cosine to the whole-clip print). Never call `embed()` on audio of unbounded length on the main thread: a 15 s line would block it for ~0.24 s.
+- The speaker model is `wespeaker_resnet34_LM_cmn.onnx`: the sherpa-onnx release's `wespeaker_en_voxceleb_resnet34_LM.onnx` with `feature_normalize_type=global-mean` appended to its ONNX metadata (`addMetadata()` in `download-models.js`, which checks the SHA-256 before and after). WeSpeaker models are trained on mean-normalized features (CMN), but the release files lack that entry, and sherpa-onnx 1.13.8 subtracts the mean only when the metadata names it. Without it the voice print follows the loudness (the same speech at −20 dB scored 0.71 against itself) and Czech EER was 17 % instead of 1.34 % (CAM++: 1.72 %). Any other WeSpeaker file needs the same fix; check a new speaker model by embedding the same speech at two volumes (cosine should be ~1.0). The patched file has its own name so that installs re-embed their recordings.
+- `CHANGE_MAX_SIMILARITY` (0.5), `VOICE_MARGIN` and the `LEARN_*` constants were set with CAM++ and kept for ResNet34-LM: its scores are on the same scale (same-speaker 5th percentile at 3 s 0.61 vs 0.60), and halves of one utterance split at 0.5 with 0.8 % false splits and 0.6 % missed changes (CAM++: 0.6 % / 1.2 %). On a conversation made from the four real enrolled voices (turns 0.15–0.8 s apart, each person in turn not enrolled), a change similarity of 0.7 split an A–B–A stretch with an unenrolled A that 0.5 credits wholly to B (55 % → 4 % of A's words named), but it also split people's own speech (enrolled words named right 95–98 % instead of 98–100 %); 0.6 changed nothing. `split()` makes one cut at a time, so A–B–A with A unenrolled (no `voiceChanges()` cut) has both halves containing A.
 - Files are read in the browser by `media.js`. MP4/M4A/MOV with AAC and WAV are read piece by piece: `containers.js` finds the frames (MP4 sample tables, `co64` for files over 4 GB) or the samples, WebCodecs `AudioDecoder` decodes the AAC frames, and `resample.js` converts to 16 kHz as they come (bit for bit what `resample()` in `src/audio.js` gives). Their length is known from the header, only the chosen part is decoded, and any length fits in memory. Other formats go through `decodeFile()` (`decodeAudioData`), which decodes the whole file at its own rate first: a 2.1-hour M4A needed 2.7 GB that way and failed with a misleading "not an audio format" message. `containers.js` and `resample.js` have no imports, so `test/media.test.js` runs them in Node.
 - Whole recordings (voice samples, *Test recognition*, saving an unknown speaker) go through `engine.analyzeRecording()`, which runs `analyze()` in `voice-worker.js` with its own speaker model: on the main thread a 10-minute recording stopped the server for 5.8 s; in the worker the slowest request meanwhile took 20 ms. Never call `speechOnly()`/`embedLong()` on a whole recording on the main thread (only `VoiceManager.init()` does, at startup, when the speaker model changed). If the worker fails, the work falls back to the main thread. `VoiceManager.addSample()` and `TranscriptionSession.saveUnknown()` are therefore async.
 - A voice scores its **best** print: the recordings' average, each recording (from two on), and the average of learned lines (`voice_learned`). Learning from live speech is gated by `identify(..., { enrolledOnly: true })`: never let learned prints take part in deciding what gets learned, or one wrong match feeds itself. A voice without recordings has no prints at all, whatever it learned.
 - Corrections (`correct` / `assignUnknown` WebSocket messages) use the embeddings the session keeps per final line id (`session.recent`); only lines of the current session can be corrected.
 - Every `voice_samples` row stores the speaker `model` that produced its embedding. `VoiceManager.init()` re-embeds rows from the stored WAVs when `SPEAKER_MODEL` changes, so keep the original recordings.
+- A threshold saved on the Voices page (`settings.speakerThreshold`) is stored with the model it was set for (`speakerThresholdModel`) and counts only for that model (`savedThreshold()`); with another model the default applies, because scores of different models are on different scales. A threshold saved before the model was recorded counts for the model of the recordings' prints; `init()` pins it before re-embedding them.
 
 **Saved transcripts**
 - Each WebSocket connection writes to one transcript (`live` in `ws.js`). It is created with the first final line, continued when `start` names a transcript of the same user (page reload, reconnect), and replaced on `newTranscript`. Saving errors are logged and never interrupt the live transcript.
@@ -167,10 +170,14 @@ The transcript keeps its lines in `sessionStorage`; clear it between runs.
 
 The synthetic TTS voices are easier than real speakers: same-voice scores are 0.8–0.95 and
 different voices score about 0. Don't tune `SPEAKER_THRESHOLD` or the change-detection constants on
-them alone; tune them with `npm run evaluate` on real recordings. The current defaults (threshold 0.5,
-`CHANGE_MAX_SIMILARITY` 0.5) were chosen on three real 60 s recordings: own-voice scores 0.51–0.95,
-other people up to 0.50; at 0.4 a person who was not enrolled got lines of an enrolled voice, and at a
-split setting of 0.3 most speaker changes without a pause stayed in one line.
+them alone; tune them with `npm run evaluate` on real recordings. `CHANGE_MAX_SIMILARITY` 0.5 was
+chosen on three real 60 s recordings: at 0.3 most speaker changes without a pause stayed in one line.
+The threshold 0.6 was chosen for ResNet34-LM on Czech parliament speeches (VoxPopuli, 52 speakers,
+10 enrolled voices): people who were not enrolled got a name for 0.6 / 1.1 / 1.8 % of their
+1.5 / 3 / 6 s segments, enrolled people were named correctly for 78 / 96 / 99 %, and enrolled people
+almost never got someone else's name (≤ 0.1 %). CAM++ at the old 0.5 gave 12 / 21 / 33 % false
+names, which matches what real recordings showed (people who were not enrolled scoring up to 0.50).
+0.55 is the balanced optimum if unknown short lines matter more than occasional false names.
 
 ## Before you finish a change
 

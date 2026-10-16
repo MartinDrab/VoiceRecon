@@ -16,6 +16,8 @@ const EMPTY_RESULT = { text: '', lang: '', tokens: [], timestamps: [], durations
 // Names and terms (hotwords) need beam search; 4 paths cost about 20-40% more decoding time.
 const BEAM_PATHS = 4;
 
+const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
+
 /**
  * The model's tokens ("▁" starts a word). Hotwords are given as words, which the recognizer splits
  * into tokens with a BPE vocabulary file (token, tab, score). Parakeet ships only tokens.txt, whose
@@ -91,7 +93,7 @@ function meanEmbedding(items) {
 }
 
 /**
- * Owns the neural models (Silero VAD, Parakeet ASR, CAM++ speaker embeddings) and shares them
+ * Owns the neural models (Silero VAD, Parakeet ASR, speaker embeddings) and shares them
  * between all transcription sessions. ASR runs off the main thread and is serialized through a
  * queue so concurrent sessions do not oversubscribe the CPU; final results take priority over
  * interim (partial) ones, and both over background work (uploaded files).
@@ -108,6 +110,8 @@ class SpeechEngine {
     this.worker = null; // computes voice prints of recordings (voice-worker.js)
     this.pending = new Map(); // worker job id -> { resolve, reject }
     this.jobSeq = 0;
+    // Stored with every voice print and saved threshold; known before the model loads.
+    this.speakerModelName = path.basename(config.speakerModel || '');
   }
 
   async load() {
@@ -144,7 +148,6 @@ class SpeechEngine {
   loadSpeakerModel() {
     const { threads, speakerModel } = this.config;
     this.extractor = new sherpa.SpeakerEmbeddingExtractor({ model: speakerModel, numThreads: Math.min(2, threads), debug: 0 });
-    this.speakerModelName = path.basename(speakerModel);
   }
 
   /** Starts the voice-print worker; without it (it failed to start or stopped) the work runs here. */
@@ -286,6 +289,27 @@ class SpeechEngine {
   }
 
   /**
+   * Voice print of a line (an utterance or part of one), on the main thread. One embed() call
+   * blocks it for the whole clip, ~16 ms per second of audio with ResNet34-LM at 2 threads, so a
+   * 15 s line would stop audio for every user for ~0.24 s. Longer lines are embedded in equal
+   * pieces of at most EMBED_CHUNK_SECONDS, with an event-loop turn between them, and averaged as
+   * in embedLong().
+   */
+  async embedLine(samples) {
+    const n = Math.ceil(samples.length / (EMBED_CHUNK_SECONDS * SAMPLE_RATE));
+    if (n <= 1) return this.embed(samples);
+    const size = Math.ceil(samples.length / n);
+    const items = [];
+    for (let i = 0; i < samples.length; i += size) {
+      if (i) await yieldToEventLoop();
+      const piece = samples.subarray(i, Math.min(samples.length, i + size));
+      const embedding = this.embed(piece);
+      if (embedding) items.push({ embedding, weight: piece.length });
+    }
+    return meanEmbedding(items);
+  }
+
+  /**
    * Speech-to-text. Jobs run in FIFO order within their priority: final results first, then
    * interim ones, then background ones (uploaded files), so a long file never delays what people
    * see live. `owner` tags the job so that cancel() can drop it while it is still queued.
@@ -367,4 +391,5 @@ function analyze(engine, { wav, samples, sampleRate, keepWav = false }) {
 
 module.exports = {
   SpeechEngine, SAMPLE_RATE, VAD_WINDOW, l2normalize, cosine, meanEmbedding, embeddingToBlob, embeddingFromBlob, spellable, analyze,
+  yieldToEventLoop,
 };

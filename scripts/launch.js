@@ -43,13 +43,16 @@ function installDependencies() {
 
 /**
  * Downloads the speech models when a file is missing (about 3 GB, once). Installs from before the
- * fp32 encoder lack only its two files; the int8 encoder they have is no longer used.
+ * fp32 encoder lack only its two files; the int8 encoder they have is no longer used. Installs from
+ * before ResNet34-LM lack only the speaker model (CAM++ stays in the folder).
  */
 function downloadModels(config) {
   const missing = config.modelFiles.filter((f) => !fs.existsSync(f));
   if (!missing.length) return;
   const { encoder, encoderWeights } = config.asr;
-  if (missing.every((f) => f === encoder || f === encoderWeights)) {
+  if (missing.every((f) => f === config.speakerModel)) {
+    console.log('Downloading the more accurate speaker recognition model (27 MB, once)...');
+  } else if (missing.every((f) => f === encoder || f === encoderWeights || f === config.speakerModel)) {
     console.log('Downloading the more accurate speech recognition model (about 2.4 GB, once)...');
   } else {
     console.log('Downloading the speech models (about 3 GB, only the first time)...');

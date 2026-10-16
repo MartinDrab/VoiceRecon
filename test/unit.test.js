@@ -423,6 +423,51 @@ test('voice manager validation and matching', () => {
   db.close();
 });
 
+test('a saved threshold counts only for the speaker model it was set with', () => {
+  const dataDir = tmp();
+  const db = openDatabase(dataDir);
+  fs.mkdirSync(path.join(dataDir, 'recordings', '1'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'recordings', '1', 'a.wav'), encodeWav(new Float32Array(16000), 16000));
+  db.prepare("INSERT INTO voices (name, color) VALUES ('Anna', '#ff0000')").run();
+  db.prepare(`INSERT INTO voice_samples (voice_id, file, label, duration, speech_duration, embedding, model)
+    VALUES (1, '1/a.wav', '', 1, 1, ?, 'old')`).run(Buffer.alloc(12));
+  setSetting(db, 'speakerThreshold', 0.45); // saved before thresholds named their model
+  const engine = (model) => ({ ready: true, speakerModelName: model, speechOnly: (s) => s, embedLong: () => l2normalize(Float32Array.of(1, 0, 0)) });
+  const manager = (model) => new VoiceManager(db, engine(model), { dataDir, defaultThreshold: 0.6 });
+
+  assert.strictEqual(manager('old').threshold, 0.45, 'an older threshold counts for the model of the recordings');
+  const vm = manager('new');
+  assert.strictEqual(vm.threshold, 0.6);
+  vm.init();
+  assert.strictEqual(db.prepare('SELECT model FROM voice_samples').get().model, 'new', 'the recording was re-embedded');
+  assert.strictEqual(manager('new').threshold, 0.6, 'still not the old model\'s threshold once the recordings changed model');
+  assert.strictEqual(manager('old').threshold, 0.45, 'kept for the old model');
+
+  vm.setThreshold(0.65);
+  assert.strictEqual(vm.threshold, 0.65);
+  assert.strictEqual(manager('new').threshold, 0.65);
+  assert.strictEqual(manager('old').threshold, 0.6);
+  db.close();
+});
+
+test('long lines are voice-printed in pieces of at most 6 s with event-loop turns between them', async () => {
+  const engine = new SpeechEngine({});
+  const lengths = [];
+  let between = null; // pieces done when other work queued during the first piece ran
+  engine.embed = (samples) => {
+    lengths.push(samples.length / 16000);
+    if (lengths.length === 1) setImmediate(() => { between = lengths.length; });
+    return l2normalize(Float32Array.of(lengths.length, 1));
+  };
+  await engine.embedLine(new Float32Array(16000 * 5));
+  assert.deepStrictEqual(lengths, [5], 'short lines in one piece');
+  lengths.length = 0;
+  const print = await engine.embedLine(new Float32Array(16000 * 15));
+  assert.deepStrictEqual(lengths, [5, 5, 5]);
+  assert.strictEqual(between, 1, 'other work runs after the first piece');
+  assert.ok(Math.abs(Math.hypot(...print) - 1) < 1e-6, 'the average is normalized');
+});
+
 test('voices match their best recording, and learn only from clear matches', () => {
   const dataDir = tmp();
   const db = openDatabase(dataDir);

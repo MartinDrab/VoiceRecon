@@ -94,7 +94,7 @@ const haveModels = process.env.VOICERECON_REQUIRE_MODELS === '1'
 
 test('evaluate script on the synthetic conversation', { skip: !haveModels && 'models or fixtures missing', timeout: 180000 }, () => {
   const json = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'voicerecon-eval-test-')), 'out.json');
-  execFileSync(process.execPath, [path.join(config.root, 'scripts', 'evaluate.js'), FIXTURES, '--threshold', '0.3,0.5', '--learn', '0,1', '--json', json],
+  execFileSync(process.execPath, [path.join(config.root, 'scripts', 'evaluate.js'), FIXTURES, '--threshold', '0.3,0.6', '--learn', '0,1', '--json', json],
     { stdio: 'pipe' });
   const out = JSON.parse(fs.readFileSync(json, 'utf8'));
   assert.strictEqual(out.runs.length, 4);

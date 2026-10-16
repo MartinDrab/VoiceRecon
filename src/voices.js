@@ -30,6 +30,25 @@ const CORRECTION_MIN_SECONDS = 1.0;
 const MAX_LEARNED = { live: 30, correction: 30 }; // per voice; the oldest are dropped first
 const MIN_LIVE_FOR_PRINT = 3; // live lines needed before they count (corrections count at once)
 
+/**
+ * The speaker model a match threshold saved on the Voices page was chosen with. One saved before
+ * that was recorded counts for the model of the recordings' voice prints.
+ */
+function thresholdModel(db, model) {
+  const sample = db.prepare('SELECT model FROM voice_samples ORDER BY id LIMIT 1').get();
+  return getSetting(db, 'speakerThresholdModel', sample ? sample.model : model);
+}
+
+/**
+ * The match threshold saved on the Voices page, or null when there is none for this speaker model:
+ * scores of different models are on different scales, so a threshold tuned for one says nothing
+ * about another. It is ignored, not deleted, so it applies again if its model comes back.
+ */
+function savedThreshold(db, model) {
+  const value = getSetting(db, 'speakerThreshold', null);
+  return value !== null && thresholdModel(db, model) === model ? value : null;
+}
+
 function validateName(name) {
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 60) {
     throw new HttpError(400, 'Name must be 1–60 characters long.');
@@ -60,9 +79,21 @@ class VoiceManager extends EventEmitter {
     this.settings = new Map(); // settings read on every line, kept after the first read
   }
 
-  /** Call once the speech engine is loaded. Re-embeds samples made with a different speaker model. */
+  /**
+   * Call once the speech engine is loaded. Re-embeds samples made with a different speaker model;
+   * a threshold saved for another model no longer applies (savedThreshold()).
+   */
   init() {
     const model = this.engine.speakerModelName;
+    const saved = getSetting(this.db, 'speakerThreshold', null);
+    if (saved !== null) {
+      // Before the samples change model, which tells what an older saved threshold was chosen with.
+      const tunedFor = thresholdModel(this.db, model);
+      setSetting(this.db, 'speakerThresholdModel', tunedFor);
+      if (tunedFor !== model) {
+        console.log(`The match threshold ${saved} was set for ${tunedFor}; ${model} uses ${this.defaultThreshold} until one is set on the Voices page.`);
+      }
+    }
     const stale = this.db.prepare('SELECT * FROM voice_samples WHERE model <> ?').all(model);
     for (const s of stale) {
       try {
@@ -93,12 +124,16 @@ class VoiceManager extends EventEmitter {
   }
 
   get threshold() {
-    return this.kept('speakerThreshold', this.defaultThreshold);
+    if (!this.settings.has('speakerThreshold')) {
+      this.settings.set('speakerThreshold', savedThreshold(this.db, this.engine.speakerModelName) ?? this.defaultThreshold);
+    }
+    return this.settings.get('speakerThreshold');
   }
 
   setThreshold(value) {
     const v = Number(value);
     if (!Number.isFinite(v) || v < 0.05 || v > 0.95) throw new HttpError(400, 'Threshold must be between 0.05 and 0.95.');
+    setSetting(this.db, 'speakerThresholdModel', this.engine.speakerModelName);
     this.keep('speakerThreshold', Math.round(v * 100) / 100);
     this.emit('changed');
   }
@@ -358,4 +393,4 @@ class VoiceManager extends EventEmitter {
   }
 }
 
-module.exports = { VoiceManager };
+module.exports = { VoiceManager, savedThreshold };

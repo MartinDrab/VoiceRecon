@@ -20,10 +20,24 @@ const PARAKEET = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
 
 const MODELS = [
   { name: 'Silero VAD', url: `${BASE}/asr-models/silero_vad.onnx`, file: 'silero_vad.onnx' },
+  // Speaker models (`speaker`) are fetched only when SPEAKER_MODEL names them.
+  {
+    name: 'WeSpeaker ResNet34-LM speaker embeddings, with mean normalization',
+    url: `${BASE}/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx`,
+    file: 'wespeaker_resnet34_LM_cmn.onnx',
+    speaker: true,
+    sha256: 'e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012',
+    // WeSpeaker models expect the mean of each feature removed over the clip (CMN), but this file
+    // does not say so, and sherpa-onnx removes it only when the model's metadata asks. Without it
+    // the voice print follows the loudness (17 % EER on Czech instead of 1.3 %).
+    metadata: { feature_normalize_type: 'global-mean' },
+    patchedSha256: 'ce2c5db3fb2c438f1d58de35577c951bc27ea0d41ef74968de4a480a1a59e39b',
+  },
   {
     name: 'CAM++ speaker embeddings (3D-Speaker)',
     url: `${BASE}/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx`,
     file: '3dspeaker_campplus_zh_en_advanced.onnx',
+    speaker: true,
   },
   {
     name: 'NVIDIA Parakeet TDT 0.6B v3 (int8 decoder and joiner), 25 European languages incl. Czech',
@@ -78,6 +92,27 @@ async function download(url, dest, sha256) {
   }
 }
 
+/**
+ * Appends entries to an ONNX model's metadata. A model file is one protobuf message (ModelProto),
+ * and a field appended to it is read like the others: metadata_props is field 14, a list of
+ * key (1) / value (2) string pairs.
+ */
+function addMetadata(file, entries) {
+  const varint = (n) => {
+    const bytes = [];
+    for (; n > 127; n >>>= 7) bytes.push((n & 127) | 128);
+    return [...bytes, n];
+  };
+  const field = (number, data) => Buffer.from([(number << 3) | 2, ...varint(data.length), ...data]);
+  for (const [key, value] of Object.entries(entries)) {
+    fs.appendFileSync(file, field(14, Buffer.concat([field(1, Buffer.from(key)), field(2, Buffer.from(value))])));
+  }
+}
+
+function sha256Of(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
 async function fetchModel(m) {
   const target = path.join(config.modelsDir, m.file || m.dir);
   if (fs.existsSync(target)) {
@@ -86,8 +121,16 @@ async function fetchModel(m) {
   }
   console.log(`↓ ${m.name}`);
   if (m.file) {
-    await download(m.url, `${target}.part`, m.sha256);
-    fs.renameSync(`${target}.part`, target);
+    const part = `${target}.part`;
+    await download(m.url, part, m.sha256);
+    if (m.metadata) {
+      addMetadata(part, m.metadata);
+      if (sha256Of(part) !== m.patchedSha256) {
+        fs.rmSync(part);
+        throw new Error(`Adding the metadata to ${m.file} gave an unexpected file.`);
+      }
+    }
+    fs.renameSync(part, target);
     return;
   }
   const archive = path.join(config.modelsDir, `${m.dir}.tar.bz2`);
@@ -109,7 +152,8 @@ async function fetchModel(m) {
 
 async function main() {
   fs.mkdirSync(config.modelsDir, { recursive: true });
-  const list = process.argv.includes('--test') ? [...MODELS, ...TEST_MODELS] : MODELS;
+  const list = (process.argv.includes('--test') ? [...MODELS, ...TEST_MODELS] : MODELS)
+    .filter((m) => !m.speaker || path.join(config.modelsDir, m.file) === config.speakerModel);
   for (const m of list) await fetchModel(m);
   console.log(`Models are in ${config.modelsDir}`);
 }

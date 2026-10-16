@@ -22,7 +22,7 @@ const config = require('../src/config');
 const { openDatabase, getSetting } = require('../src/db');
 const { decodeWav } = require('../src/audio');
 const { SpeechEngine, SAMPLE_RATE } = require('../src/speech/engine');
-const { VoiceManager } = require('../src/voices');
+const { VoiceManager, savedThreshold } = require('../src/voices');
 const { TranscriptionSession, CHANGE_MAX_SIMILARITY } = require('../src/transcriber');
 const { parseReference, score, formatDetails } = require('../src/evaluation');
 
@@ -115,7 +115,7 @@ function appVoices() {
     const rows = db.prepare('SELECT v.name, s.file FROM voices v JOIN voice_samples s ON s.voice_id = v.id ORDER BY v.name, s.id').all();
     return {
       voices: rows.map((r) => ({ name: r.name, file: path.join(config.dataDir, 'recordings', String(r.file)) })),
-      threshold: getSetting(db, 'speakerThreshold', config.speakerThreshold),
+      threshold: savedThreshold(db, path.basename(config.speakerModel)) ?? config.speakerThreshold,
       learnFromSpeech: getSetting(db, 'learnFromSpeech', false),
       vocabulary: getSetting(db, 'vocabulary', []),
     };

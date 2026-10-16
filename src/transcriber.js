@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { concat, encodeWav } = require('./audio');
-const { SAMPLE_RATE, VAD_WINDOW, cosine, l2normalize } = require('./speech/engine');
+const { SAMPLE_RATE, VAD_WINDOW, cosine, l2normalize, yieldToEventLoop } = require('./speech/engine');
 
 const sec = (s) => Math.round(s * SAMPLE_RATE);
 
@@ -44,8 +44,6 @@ const LINE_MIN_SECONDS = 3;
 const DEBUG = process.env.VOICERECON_DEBUG === '1';
 const debug = (...args) => DEBUG && console.log('[transcriber]', ...args);
 const DEBUG_DIR = path.join(os.tmpdir(), 'voicerecon-debug');
-
-const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 
 /**
  * Voice Transcriber: one live transcription session (one microphone).
@@ -187,9 +185,11 @@ class TranscriptionSession extends EventEmitter {
     const audio = this.extract(this.speechStart, this.fed);
     this.partialBusy = true;
     this.recognize(withTail(audio), audio.length < SHORT_UTTERANCE ? this.context : null, { interim: true, owner: this })
-      .then((r) => {
+      .then(async (r) => {
         if (this.closed || this.speechStart === null || this.gen !== gen || !r.text) return;
-        const speaker = audio.length >= NEW_SPEAKER_MIN ? this.peekSpeaker(this.engine.embed(audio)) : { kind: 'none' };
+        const embedding = audio.length >= NEW_SPEAKER_MIN ? await this.engine.embedLine(audio) : null;
+        if (this.closed || this.speechStart === null || this.gen !== gen) return; // ended meanwhile
+        const speaker = this.peekSpeaker(embedding);
         this.partialGen = gen;
         this.emit('message', { type: 'partial', text: r.text, speaker });
       })
@@ -230,11 +230,12 @@ class TranscriptionSession extends EventEmitter {
             ? cutWords(words, turns.slice(1).map((t) => (coreStart + t.start) / SAMPLE_RATE - audioStart))
             : [null];
           if (turns.length > 1) debug(`  split at ${turns.slice(1).map((t) => (t.start / SAMPLE_RATE).toFixed(2)).join(', ')} s`);
-          turns.forEach((t, i) => {
+          for (const [i, t] of turns.entries()) {
             const own = words ? parts[i] || [] : null; // null: no word times
-            if (own ? !wordsText(own) : i > 0) return;
+            if (own ? !wordsText(own) : i > 0) continue;
             const part = core.subarray(t.start, t.end);
-            const embedding = this.engine.embed(part);
+            const embedding = await this.engine.embedLine(part);
+            if (this.closed) return;
             const speaker = this.assignSpeaker(part, embedding);
             const partStart = (coreStart + t.start) / SAMPLE_RATE;
             const partEnd = (coreStart + t.end) / SAMPLE_RATE;
@@ -267,7 +268,7 @@ class TranscriptionSession extends EventEmitter {
                 speaker,
               });
             });
-          });
+          }
         }
         // Retire the interim text only now, so the utterance never disappears from the screen.
         // If a newer utterance already shows interim text, leave that alone.
@@ -311,7 +312,7 @@ class TranscriptionSession extends EventEmitter {
   /**
    * Splits an utterance where the voice changes (binary segmentation over sliding-window speaker
    * embeddings). Returns [{ start, end }] in samples relative to the utterance. Each embedding
-   * takes ~10-20 ms of CPU, so the event loop is given a turn between them to keep audio flowing.
+   * takes ~25 ms of CPU, so the event loop is given a turn between them to keep audio flowing.
    */
   async speakerTurns(core) {
     const whole = [{ start: 0, end: core.length }];
