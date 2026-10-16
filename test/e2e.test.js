@@ -22,7 +22,7 @@ const config = require('../src/config');
 const FIXTURES = path.join(__dirname, 'fixtures');
 // Skipped without models and test audio, unless VOICERECON_REQUIRE_MODELS=1 (nightly CI): then it fails.
 const haveModels = process.env.VOICERECON_REQUIRE_MODELS === '1'
-  || (fs.existsSync(config.asr.encoder) && fs.existsSync(path.join(FIXTURES, 'reference.txt')));
+  || (config.modelFiles.every((f) => fs.existsSync(f)) && fs.existsSync(path.join(FIXTURES, 'reference.txt')));
 
 function freePort() {
   return new Promise((resolve) => {

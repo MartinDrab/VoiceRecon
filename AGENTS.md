@@ -12,7 +12,7 @@ the CPU through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (`sherpa-on
 native addon):
 
 - **Silero VAD** cuts the stream into utterances.
-- **Parakeet TDT 0.6B v3** (int8) does speech-to-text. It covers Czech, English and 23 other languages, and detects the language automatically; `result.lang` is always empty.
+- **Parakeet TDT 0.6B v3** (fp32 encoder, int8 decoder and joiner) does speech-to-text. It covers Czech, English and 23 other languages, and detects the language automatically; `result.lang` is always empty.
 - **CAM++** (3D-Speaker) computes speaker embeddings (voice prints).
 
 The UI is in English and Czech (chosen per browser); the transcribed speech is mainly Czech.
@@ -21,7 +21,7 @@ The UI is in English and Czech (chosen per browser); the transcribed speech is m
 
 ```bash
 npm install                          # dependencies (express, ws, sherpa-onnx-node)
-npm run models                       # speech models -> models/ (~520 MB, gitignored)
+npm run models                       # speech models -> models/ (~3 GB download, gitignored)
 npm run models -- --test             # also the two Czech TTS voices used for test audio
 node scripts/make-test-audio.js      # synthetic conversation -> test/fixtures/ (gitignored)
 npm test                             # unit + end-to-end tests (node:test)
@@ -81,6 +81,7 @@ Uploaded files take the same path from step 2 on. *Transcribe a file* (`transcri
 - The whole server pipeline is 16 kHz mono float32 (`SAMPLE_RATE`). Resample at the edges (`engine.resample`, which uses the windowed-sinc `audio.resample`, and the worklet), never in the middle. Plain linear resampling aliases and measurably hurts recognition.
 - Speaker changes inside an utterance (`speakerTurns`): `voiceChanges()` first cuts where one enrolled voice clearly takes over from another (each 1.5 s window matched with `identify()`, one clear window is enough), then `split()` cuts each part where its halves sound least alike. `cutWords()` maps the cut times to word boundaries; when no word follows a cut (the recognizer missed the next speaker's words), all words stay with the earlier part. Each part is then split into lines at sentence ends (`sentenceLines()`: at least 3 s per line, not after an ordinal like "32."); its lines share the part's speaker and voice print.
 - `TranscriptionSession` takes options (`interim`, `learn`, `background`, `vad`, `changeMaxSimilarity`); live sessions use the defaults, uploaded files and the evaluation script set some. A new tunable belongs in these options with the current value as default, so it can be swept with `npm run evaluate`.
+- Parakeet runs with the fp32 encoder (`encoder.onnx`, which loads `encoder.weights` from its own folder) and the int8 decoder and joiner of the int8 package. On FLEURS Czech (723 utterances, beam search) the int8 encoder had 21.6 % WER against 11.0 % at the same speed; fp32 decoder and joiner gain only 0.3 points more but double the decoding time, because beam search runs them many times. The price is ~1.5 GB more RAM and ~0.7 s more loading time. Both encoder files are in `config.modelFiles`, so a missing `encoder.weights` stops loading with the missing-files message (and makes the launcher download it); without that check the native code ends the whole process without a word. `tokens.txt` is the same in both packages, so the vocabulary and hotwords are unaffected.
 - Names and terms ("hotwords") need beam search (`modified_beam_search`, 4 paths: 20–40 % slower than greedy) and a BPE vocabulary file to turn words into the model's tokens. Parakeet ships only `tokens.txt`, so `loadVocabulary()` writes `voicerecon-bpe.vocab` next to it (score = -id). One phrase the model cannot spell makes the recognizer drop the whole list, so `setHotwords()` filters with `spellable()`. Boosts per token: voice names 1, the Voices page's terms 2 (`NAME_BOOST`, `TERM_BOOST` in `voices.js`): on real recordings 2 fixed a name 1 missed, but on test/fixtures 2 turned "Byli" into "Jili" for the voice name "jirka". The server keeps the list current on every `voices` change (`syncHotwords`); `npm run evaluate` uses the voices' names and `--words`.
 - All ASR goes through `SpeechEngine.transcribe()`. Never call the recognizer directly: the queue serializes CPU-heavy decoding, runs finals before interims before background jobs (uploaded files), and tags jobs with an `owner` so `cancel()` can drop work for closed sessions and finished utterances. `engine.idle` ignores background jobs, so live interim results keep coming while a file is transcribed.
 - An uploaded file must never get ahead of live work: `UploadQueue` feeds it in 1 s pieces with an event-loop turn between them and waits for the session to settle after every 5 s. Keep it that way, and keep one file at a time.
@@ -139,7 +140,7 @@ Uploaded files take the same path from step 2 on. *Transcribe a file* (`transcri
 
 - SQLite (and Python) cannot open paths longer than 260 characters. Keep `DATA_DIR` and temporary script paths short.
 - In Git Bash, `tar` is GNU tar, which reads `C:\...` as a remote host. Pass relative archive paths (see `download-models.js`).
-- The machine has no GPU and no microphone. ASR runs at about 5% of real time on 4 vCPUs, and the server uses ~1 GB of RAM.
+- The machine has no GPU and no microphone. ASR runs at about 5% of real time on 4 vCPUs, and the server uses ~2.3 GB of RAM after loading the models (3.3 GB peak over a long run).
 
 ## Testing the browser UI without a microphone
 

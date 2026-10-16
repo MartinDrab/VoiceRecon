@@ -1,6 +1,6 @@
 @echo off
 rem Starts VoiceRecon: double-click this file. On first use it installs what is needed
-rem (dependencies, about 520 MB of speech models). See README.md, "Setup".
+rem (dependencies, about 3 GB of speech models). See README.md, "Setup".
 cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 (

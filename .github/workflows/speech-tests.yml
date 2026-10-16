@@ -1,6 +1,6 @@
 # Nightly (and on demand): downloads the speech models, generates the synthetic Czech test
 # conversation and runs every test including the end-to-end speech tests, then publishes an
-# accuracy report. Too slow and too large (~650 MB of models) for every push.
+# accuracy report. Too slow and too large (~2.7 GB of models) for every push.
 name: Speech tests
 
 on:

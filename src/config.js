@@ -28,9 +28,13 @@ function num(name, fallback) {
 }
 
 const modelsDir = pathSetting('MODELS_DIR', 'models');
+// The int8 package's decoder, joiner and tokens with the full-precision (fp32) encoder: the int8
+// encoder doubled the Czech word error rate (FLEURS: 21.6 % instead of 11.0 %) at the same speed.
+// An fp32 decoder and joiner would gain only 0.3 points but double the beam search's decoding time.
 const asrDir = path.join(modelsDir, 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8');
 const asr = {
-  encoder: path.join(asrDir, 'encoder.int8.onnx'),
+  encoder: path.join(asrDir, 'encoder.onnx'),
+  encoderWeights: path.join(asrDir, 'encoder.weights'), // loaded by encoder.onnx from its own folder
   decoder: path.join(asrDir, 'decoder.int8.onnx'),
   joiner: path.join(asrDir, 'joiner.int8.onnx'),
   tokens: path.join(asrDir, 'tokens.txt'),
@@ -55,7 +59,7 @@ module.exports = {
   vadModel,
   speakerModel,
   /** Every file the speech engine loads (scripts/download-models.js fetches them). */
-  modelFiles: [asr.encoder, asr.decoder, asr.joiner, asr.tokens, vadModel, speakerModel],
+  modelFiles: [asr.encoder, asr.encoderWeights, asr.decoder, asr.joiner, asr.tokens, vadModel, speakerModel],
 
   // Default cosine-similarity threshold for accepting a voice match (also for joining an unknown
   // speaker). Can be changed at runtime from the Voices page (stored in the database). 0.5 rather

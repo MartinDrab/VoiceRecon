@@ -41,10 +41,19 @@ function installDependencies() {
   if (r.status !== 0) fail('Installing the dependencies failed (see above). Check the internet connection and start again.');
 }
 
-/** Downloads the speech models when a file is missing (about 520 MB, once). */
+/**
+ * Downloads the speech models when a file is missing (about 3 GB, once). Installs from before the
+ * fp32 encoder lack only its two files; the int8 encoder they have is no longer used.
+ */
 function downloadModels(config) {
-  if (config.modelFiles.every((f) => fs.existsSync(f))) return;
-  console.log('Downloading the speech models (about 520 MB, only the first time)...');
+  const missing = config.modelFiles.filter((f) => !fs.existsSync(f));
+  if (!missing.length) return;
+  const { encoder, encoderWeights } = config.asr;
+  if (missing.every((f) => f === encoder || f === encoderWeights)) {
+    console.log('Downloading the more accurate speech recognition model (about 2.4 GB, once)...');
+  } else {
+    console.log('Downloading the speech models (about 3 GB, only the first time)...');
+  }
   const r = spawnSync(process.execPath, [path.join(__dirname, 'download-models.js')], { cwd: ROOT, stdio: 'inherit' });
   if (r.status !== 0) {
     fail('Downloading the speech models failed (see above). Check the internet connection and start again; finished models are kept.');

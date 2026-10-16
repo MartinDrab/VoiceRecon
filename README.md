@@ -19,7 +19,7 @@ VoiceRecon is a single Node.js server with a plain HTML/JS front end. All speech
 
 | Component | Where | Technology |
 |---|---|---|
-| Voice Transcriber | [src/transcriber.js](src/transcriber.js), [src/speech/engine.js](src/speech/engine.js) | [Silero VAD](https://github.com/snakers4/silero-vad) cuts the stream into utterances; [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (int8) transcribes them. It covers 25 European languages including **Czech and English** and detects the language by itself. |
+| Voice Transcriber | [src/transcriber.js](src/transcriber.js), [src/speech/engine.js](src/speech/engine.js) | [Silero VAD](https://github.com/snakers4/silero-vad) cuts the stream into utterances; [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) transcribes them, with its full-precision encoder (the int8 one made twice as many errors in Czech) and the int8 decoder and joiner. It covers 25 European languages including **Czech and English** and detects the language by itself. |
 | Voice Manager | [src/voices.js](src/voices.js) | [CAM++](https://github.com/modelscope/3D-Speaker) speaker embeddings (voice prints). Each voice's recordings are averaged into a voice print that live speech is compared against (cosine similarity). |
 | Web Interface | [public/](public/), [src/server.js](src/server.js), [src/ws.js](src/ws.js) | Express + WebSocket. The browser captures the microphone, converts it to 16 kHz PCM in an AudioWorklet and streams it to the server. |
 | Users & login | [src/auth.js](src/auth.js) | SQLite (`node:sqlite`), scrypt password hashes, HTTP-only session cookies. |
@@ -27,7 +27,7 @@ VoiceRecon is a single Node.js server with a plain HTML/JS front end. All speech
 All models run through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), which provides prebuilt Node.js bindings, so nothing has to be compiled.
 
 On the development machine (4 virtual CPUs, no GPU), the speech recognizer runs at about 5 % of
-real time (a 4-second sentence takes about 0.2 s), and the server needs about 1 GB of RAM.
+real time (a 4-second sentence takes about 0.2 s), and the server needs about 2.5–3.5 GB of RAM.
 
 ### What you get
 
@@ -54,14 +54,14 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 1 
 
 - Node.js 22.13 or newer (developed with 24.22)
 - Windows 10/11 x64, Linux or macOS
-- About 1 GB of free RAM and 700 MB of disk space for the models
+- About 3.5 GB of free RAM and 2.6 GB of disk space for the models
 - A browser with microphone access (Chrome, Edge or Firefox)
 
 ## Setup
 
 The quickest way: install [Node.js](https://nodejs.org/) 22.13 or newer, then start VoiceRecon with
 **`start.cmd`** on Windows (double-click it) or **`./start.sh`** on Linux and macOS. The first time,
-this installs the dependencies and downloads the speech models (about 520 MB); then it starts the
+this installs the dependencies and downloads the speech models (about 3 GB); then it starts the
 server and opens VoiceRecon in the browser. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> (on Windows
 answer *Y* to "Terminate batch job") or by closing the window. Started again while it is running, it
 just opens the browser. `--no-browser` starts it without opening one.
@@ -76,7 +76,7 @@ npm install
 npm run models
 ```
 
-This downloads the speech models (about 520 MB) into `models/`.
+This downloads the speech models (about 3 GB) into `models/`.
 
 ```bash
 npm start
@@ -94,6 +94,16 @@ Then:
 
 1. Go to **Voices** and create a voice for each person. Add 20–60 seconds of natural speech for each (several shorter recordings are fine).
 2. Go to **Transcript** and press **Start**.
+
+### Updating an older install
+
+Older versions used the smaller int8 encoder for speech recognition. The full-precision encoder makes
+half as many errors in Czech (word error rate 11 % instead of 22 % on the FLEURS test set) at the
+same speed, but it is a 2.4 GB download and the server needs about 1.5 GB more RAM. `start.cmd` and
+`./start.sh` download it on the next start. With `npm start`, run `npm run models` first; until then
+the speech models fail to load with a message that `encoder.onnx` and `encoder.weights` are missing.
+Afterwards `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/encoder.int8.onnx` is no longer used
+and can be deleted (650 MB).
 
 ### Using it from other devices (phone, another PC)
 

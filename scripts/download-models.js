@@ -2,10 +2,11 @@
 
 /**
  * Downloads the speech models into ./models (or MODELS_DIR).
- *   npm run models            models needed to run VoiceRecon (~520 MB download)
+ *   npm run models            models needed to run VoiceRecon (~3 GB download)
  *   npm run models -- --test  also the Czech TTS voices used by scripts/make-test-audio.js
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -14,6 +15,8 @@ const { pipeline } = require('stream/promises');
 const config = require('../src/config');
 
 const BASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download';
+const FP32 = 'https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/main';
+const PARAKEET = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
 
 const MODELS = [
   { name: 'Silero VAD', url: `${BASE}/asr-models/silero_vad.onnx`, file: 'silero_vad.onnx' },
@@ -23,9 +26,24 @@ const MODELS = [
     file: '3dspeaker_campplus_zh_en_advanced.onnx',
   },
   {
-    name: 'NVIDIA Parakeet TDT 0.6B v3 (int8), 25 European languages incl. Czech',
-    url: `${BASE}/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2`,
-    dir: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
+    name: 'NVIDIA Parakeet TDT 0.6B v3 (int8 decoder and joiner), 25 European languages incl. Czech',
+    url: `${BASE}/asr-models/${PARAKEET}.tar.bz2`,
+    dir: PARAKEET,
+    unused: ['encoder.int8.onnx'], // replaced by the fp32 encoder (src/config.js says why)
+  },
+  // The fp32 encoder goes into the folder above, so it must come after it (an existing folder
+  // counts as installed). encoder.onnx loads its weights from encoder.weights next to it.
+  {
+    name: 'Parakeet encoder (fp32)',
+    url: `${FP32}/encoder.onnx`,
+    file: `${PARAKEET}/encoder.onnx`,
+    sha256: '3eed7ce424bf8339ad09233533c687e2dbd07e74ccf5027b5e7344019ea373b0',
+  },
+  {
+    name: 'Parakeet encoder weights (fp32)',
+    url: `${FP32}/encoder.weights`,
+    file: `${PARAKEET}/encoder.weights`,
+    sha256: '3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8',
   },
 ];
 
@@ -34,14 +52,17 @@ const TEST_MODELS = [
   { name: 'Czech TTS voice (Coqui, Common Voice)', url: `${BASE}/tts-models/vits-coqui-cs-cv.tar.bz2`, dir: 'vits-coqui-cs-cv' },
 ];
 
-async function download(url, dest) {
+/** Downloads url to dest; with a sha256, checks the file while it arrives and deletes it if it differs. */
+async function download(url, dest, sha256) {
   const res = await fetch(url, { redirect: 'follow' });
   if (!res.ok) throw new Error(`Download failed (${res.status}): ${url}`);
   const total = Number(res.headers.get('content-length')) || 0;
+  const hash = sha256 && crypto.createHash('sha256');
   let done = 0;
   let lastPct = -1;
   const body = Readable.fromWeb(res.body);
   body.on('data', (chunk) => {
+    if (hash) hash.update(chunk);
     done += chunk.length;
     const pct = total ? Math.floor((done / total) * 100) : -1;
     if (pct !== lastPct && pct % 5 === 0) {
@@ -51,6 +72,10 @@ async function download(url, dest) {
   });
   await pipeline(body, fs.createWriteStream(dest));
   if (total) process.stdout.write('\n');
+  if (hash && hash.digest('hex') !== sha256) {
+    fs.rmSync(dest);
+    throw new Error(`The download of ${url} is damaged (SHA-256 does not match). Start again.`);
+  }
 }
 
 async function fetchModel(m) {
@@ -61,7 +86,7 @@ async function fetchModel(m) {
   }
   console.log(`↓ ${m.name}`);
   if (m.file) {
-    await download(m.url, `${target}.part`);
+    await download(m.url, `${target}.part`, m.sha256);
     fs.renameSync(`${target}.part`, target);
     return;
   }
@@ -76,6 +101,7 @@ async function fetchModel(m) {
   // bsdtar ships with Windows 10+ and macOS; GNU tar handles .bz2 on Linux. A relative archive
   // path avoids GNU tar reading "C:\..." as a remote host.
   execFileSync('tar', ['-xjf', `../${path.basename(archive)}`], { cwd: scratch, stdio: 'inherit' });
+  for (const f of m.unused || []) fs.rmSync(path.join(scratch, m.dir, f), { force: true });
   fs.renameSync(path.join(scratch, m.dir), target);
   fs.rmSync(scratch, { recursive: true, force: true });
   fs.rmSync(archive);
