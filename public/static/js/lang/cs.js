@@ -319,6 +319,21 @@ export default {
   'It sounds unlike the other recordings of {name} ({score}): is it the same person?':
     'Nezní jako ostatní nahrávky hlasu {name} ({score}): je to stejný člověk?',
 
+  // transcribing again
+  'Transcribe again': 'Přepsat znovu',
+  'Transcribe it again from its audio with the current models, voices and names': 'Přepíše ho znovu z jeho zvuku se současnými modely, hlasy a jmény',
+  'Transcribe it again from its audio, with the current models, voices and names? Its lines are replaced, and the corrections in {n} line are lost.|Transcribe it again from its audio, with the current models, voices and names? Its lines are replaced, and the corrections in {n} lines are lost.': {
+    one: 'Přepsat ho znovu z jeho zvuku se současnými modely, hlasy a jmény? Jeho řádky se nahradí a opravy v {n} řádku se ztratí.',
+    few: 'Přepsat ho znovu z jeho zvuku se současnými modely, hlasy a jmény? Jeho řádky se nahradí a opravy ve {n} řádcích se ztratí.',
+    other: 'Přepsat ho znovu z jeho zvuku se současnými modely, hlasy a jmény? Jeho řádky se nahradí a opravy v {n} řádcích se ztratí.',
+  },
+  'Transcribe it again from its audio, with the current models, voices and names? Its lines are replaced.':
+    'Přepsat ho znovu z jeho zvuku se současnými modely, hlasy a jmény? Jeho řádky se nahradí.',
+
+  // merging speakers
+  'Or the same person as another speaker here': 'Nebo stejný člověk jako jiný mluvčí tady',
+  'Or the same person as another speaker': 'Nebo stejný člověk jako jiný mluvčí',
+
   // deciding speakers again
   'Re-check speakers': 'Znovu určit mluvčí',
   'Decide who spoke again from all the lines of each speaker together, e.g. after enrolling someone. Speakers you chose stay.':
@@ -331,7 +346,7 @@ export default {
   // audio of transcripts
   'The audio of the whole transcript': 'Zvuk celého přepisu',
   'Delete audio': 'Smazat zvuk',
-  'Play this line': 'Přehrát tento řádek',
+  'Play from here': 'Přehrát odsud',
   'Stop playing': 'Zastavit přehrávání',
   'The audio could not be played.': 'Zvuk nejde přehrát.',
   'Delete the audio of this transcript? Its text stays.': 'Smazat zvuk tohoto přepisu? Text zůstane.',

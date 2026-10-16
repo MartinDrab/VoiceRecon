@@ -388,6 +388,22 @@ test('a stretch of another voice inside one speaker\'s speech (A–B–A) is cut
     [{ start: 0, end: 2 * sr }], 'too short for windows: embedded by the caller');
 });
 
+test('two unknown speakers of a session are merged into one', () => {
+  const voices = { threshold: 0.6, identify: () => ({ voiceId: null, score: 0, scores: [] }) };
+  const session = new TranscriptionSession({ createVad: () => ({}) }, voices);
+  const messages = [];
+  session.on('message', (m) => messages.push(m));
+  const audio = new Float32Array(16000 * 2);
+  const a = session.assignSpeaker(audio, Float32Array.of(1, 0, 0));
+  const b = session.assignSpeaker(audio, Float32Array.of(0, 1, 0));
+  session.mergeUnknown(b.id, a.id);
+  assert.deepStrictEqual(messages, [{ type: 'relabel', from: b, to: a }]);
+  assert.deepStrictEqual(session.unknown.map((u) => [u.id, u.count, u.audioLen]), [[a.id, 2, 2 * 32000]]);
+  assert.deepStrictEqual(session.lastSpeaker, a, 'the last speaker is the merged one');
+  assert.ok(session.unknown[0].centroid[1] > 0.5, 'the print includes the merged speaker');
+  assert.throws(() => session.mergeUnknown(b.id, a.id), /no longer available/);
+});
+
 test('a line joins an unknown speaker at the join similarity, not at the stricter match threshold', () => {
   const voices = { threshold: 0.6, identify: () => ({ voiceId: null, score: 0, scores: [] }) };
   const at = (cos) => Float32Array.of(cos, Math.sqrt(1 - cos * cos), 0); // this similar to (1, 0, 0)
@@ -455,6 +471,7 @@ test('saving an unknown speaker waits for its voice print, once, and undoes the 
   const saving = session.saveUnknown('u1', { name: 'Eva', color: '#ff0000' });
   await assert.rejects(session.saveUnknown('u1', { name: 'Eva', color: '#ff0000' }), /no longer available/, 'a second click while saving');
   assert.throws(() => session.assignUnknown('u1', 7), /being saved/, 'no second voice for the same person');
+  assert.throws(() => session.mergeUnknown('u1', 'u1'), /no longer available/);
   assert.strictEqual(await saving, 2);
   assert.deepStrictEqual(session.unknown, []);
   assert.deepStrictEqual(messages, [{ type: 'relabel', from: { kind: 'unknown', id: 'u1', label: 'Speaker 1' }, to: { kind: 'voice', id: 2, score: 1 } }]);

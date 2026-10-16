@@ -26,6 +26,7 @@
         <button class="btn btn-sm hidden" id="stop" data-i18n>Stop transcribing</button>
         <button class="btn btn-sm hidden" id="regroup" title="Decide who spoke again from all the lines of each speaker together, e.g. after enrolling someone. Speakers you chose stay." data-i18n-attr="title" data-i18n>Re-check speakers</button>
         <button class="btn btn-sm" id="refresh" title="Reload" data-i18n-attr="title"></button>
+        <button class="btn btn-sm hidden" id="again" title="Transcribe it again from its audio with the current models, voices and names" data-i18n-attr="title" data-i18n>Transcribe again</button>
         <button class="btn btn-sm hidden" id="delete-audio" data-i18n>Delete audio</button>
         <button class="btn btn-sm btn-danger hidden" id="delete" data-i18n>Delete</button>
       </div>
@@ -39,6 +40,10 @@
       <h2 data-i18n>Who said this?</h2>
       <div class="scope" id="scope"></div>
       <div class="voice-choices" id="choices"></div>
+      <div class="dialog-section hidden" id="others-section">
+        <p class="small"><strong data-i18n>Or the same person as another speaker here</strong></p>
+        <div class="voice-choices" id="others"></div>
+      </div>
       <form id="other-form" class="dialog-section">
         <label class="field"><span data-i18n>Someone else</span>
           <input type="text" id="other-name" maxlength="60" autocomplete="off" placeholder="Name" data-i18n-attr="placeholder">

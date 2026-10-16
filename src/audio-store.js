@@ -58,6 +58,7 @@ class AudioStore {
     this.dir = path.join(dataDir, 'audio');
     fs.mkdirSync(this.dir, { recursive: true });
     this.writing = new Set(); // file names still being written (live sessions)
+    this.held = new Map(); // file name -> users reading it (transcribing again): not deleted for the limit
   }
 
   /** Call at startup: forgets pieces whose file is gone and deletes files no piece refers to. */
@@ -178,7 +179,7 @@ class AudioStore {
       JOIN transcripts t ON t.id = a.transcript_id ORDER BY t.started_at, a.id`).all();
     for (const p of pieces) {
       if (used <= limit) break;
-      if (this.writing.has(p.file)) continue;
+      if (this.writing.has(p.file) || this.held.has(p.file)) continue;
       const full = path.join(this.dir, p.file);
       used -= fileSize(full);
       fs.rmSync(full, { force: true });
@@ -188,14 +189,28 @@ class AudioStore {
 
   // ---------- playing ----------
 
-  /** The transcript's pieces: [{ file (full path), dataStart, start, seconds }] by start. */
+  /** Keeps files from being deleted for the size limit while they are read (release() afterwards). */
+  hold(names) {
+    for (const n of names) this.held.set(n, (this.held.get(n) || 0) + 1);
+  }
+
+  release(names) {
+    for (const n of names) {
+      const left = (this.held.get(n) || 1) - 1;
+      if (left > 0) this.held.set(n, left);
+      else this.held.delete(n);
+    }
+    this.enforceLimit();
+  }
+
+  /** The transcript's pieces: [{ name, file (full path), dataStart, start, seconds }] by start. */
   pieces(transcriptId) {
     return this.db.prepare('SELECT file, data_start, start_sec FROM transcript_audio WHERE transcript_id = ? ORDER BY start_sec, id')
       .all(transcriptId)
       .map((r) => {
         const file = path.join(this.dir, r.file);
         const bytes = Math.max(0, fileSize(file) - r.data_start);
-        return { file, dataStart: r.data_start, start: r.start_sec, seconds: Math.floor(bytes / 2) / SAMPLE_RATE };
+        return { name: r.file, file, dataStart: r.data_start, start: r.start_sec, seconds: Math.floor(bytes / 2) / SAMPLE_RATE };
       })
       .filter((p) => p.seconds > 0);
   }

@@ -524,6 +524,26 @@ function openWho(turn) {
       }, h('span.swatch'), h('span', {}, v.name), current ? h('span.current', {}, t('current')) : null);
     })
     : [h('p.muted.small', {}, t('There are no voices yet.'))]));
+  // Other unknown speakers of this session: "Speaker 2" may be "Speaker 5".
+  const same = new Map();
+  if (unknown) {
+    for (const x of turns) {
+      const o = x.speaker;
+      if (o.kind === 'unknown' && o.id && o.id !== sp.id && x.epoch === epoch) same.set(o.id, o);
+    }
+  }
+  $('same-choices').replaceChildren(...[...same.values()].map((o) => {
+    const info = speakerInfo(o);
+    return h('button.voice-choice', {
+      type: 'button',
+      style: { '--c': info.color },
+      onclick: () => {
+        send({ type: 'mergeUnknown', speakerId: sp.id, intoId: o.id });
+        $('who-dialog').close();
+      },
+    }, h('span.swatch'), h('span', {}, info.name));
+  }));
+  $('same-section').classList.toggle('hidden', !same.size);
   $('save-form').classList.toggle('hidden', !unknown);
   $('save-name').value = '';
   $('save-color').value = nextColor(list.map((v) => v.color));

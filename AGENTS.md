@@ -50,7 +50,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 |---|---|
 | `src/server.js` | Express app: security headers, pages, REST API, startup (models load in the background) |
 | `src/ws.js` | WebSocket `/ws/transcribe`: one `TranscriptionSession` per connection, voice-list broadcast |
-| `src/uploads.js` | Uploaded recordings: streamed to `DATA_DIR/uploads`, transcribed one at a time in the background into a new transcript |
+| `src/uploads.js` | Uploaded recordings: streamed to `DATA_DIR/uploads`, transcribed one at a time in the background into a new transcript; also transcribes a saved transcript again from its kept audio (`again()`: one session per audio piece, lines replaced when its turn comes, wall-clock times taken from the old lines, pieces held against the size limit meanwhile) |
 | `src/regroup.js` | Speakers of a whole recording decided per speaker (merge alike speakers, move clearly misplaced lines, name unknown speakers whose average matches a voice); run on the saved lines (`TranscriptStore.regroup()`) when an uploaded file is done, when a live connection stops writing to a transcript, and from History (*Re-check speakers*); `npm run evaluate -- --regroup` measures it |
 | `src/transcriber.js` | **Voice Transcriber**: VAD segmentation, interim/final results, speaker-change splitting, unknown-speaker clustering |
 | `src/voices.js` | **Voice Manager**: voices, recordings, voice prints (average, per recording, learned), `identify()`, learning from live speech and corrections |

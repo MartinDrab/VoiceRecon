@@ -134,7 +134,14 @@ class TranscriptStore {
   }
 
   /** Speaker fields for a voice ({ voiceId }) or a typed name ({ label }). */
-  resolveSpeaker(speaker) {
+  /** @param {any} speaker { voiceId } | { label } (a typed name) | { key } (a speaker of this transcript) */
+  resolveSpeaker(speaker, transcriptId) {
+    if (speaker && typeof speaker.key === 'string') {
+      const row = this.db.prepare('SELECT voice_id, speaker_key, speaker_label FROM transcript_lines WHERE transcript_id = ? AND speaker_key = ? LIMIT 1')
+        .get(transcriptId, speaker.key);
+      if (!row) throw new HttpError(400, 'That speaker is not in this transcript.');
+      return { voiceId: row.voice_id, key: row.speaker_key, label: row.speaker_label };
+    }
     if (speaker && Number.isInteger(speaker.voiceId)) {
       const v = this.voices.get(speaker.voiceId);
       return { voiceId: v.id, key: `v:${v.id}`, label: v.name };
@@ -148,11 +155,12 @@ class TranscriptStore {
    * Moves some lines ({ lineIds }) or all lines of one speaker ({ key }) to another speaker.
    * @param {number} transcriptId
    * @param {{ lineIds?: number[], key?: string }} target
-   * @param {{ voiceId?: number, label?: string }} speaker
+   * @param {{ voiceId?: number, label?: string, key?: string }} speaker key: merge into another speaker
+   *   of this transcript (e.g. "Speaker 2" is "Speaker 5")
    * @returns {any[]} the affected rows as they were before the change
    */
   setSpeaker(transcriptId, { lineIds, key }, speaker) {
-    const s = this.resolveSpeaker(speaker);
+    const s = this.resolveSpeaker(speaker, transcriptId);
     let where;
     let params;
     if (Array.isArray(lineIds)) {
@@ -274,6 +282,18 @@ class TranscriptStore {
     return this.db.prepare(`SELECT l.*, v.name AS voice_name, v.color AS voice_color
       FROM transcript_lines l LEFT JOIN voices v ON v.id = l.voice_id
       WHERE l.transcript_id = ? ORDER BY l.start_sec, l.id`).all(transcriptId).map(publicLine);
+  }
+
+  /** [[start, spokenAt]] of the transcript's lines by start (transcript time -> wall clock). */
+  wallClock(transcriptId) {
+    return this.db.prepare('SELECT start_sec, spoken_at FROM transcript_lines WHERE transcript_id = ? ORDER BY start_sec')
+      .all(transcriptId).map((r) => [r.start_sec, r.spoken_at]);
+  }
+
+  /** Deletes all lines of a transcript (before it is transcribed again). */
+  clearLines(transcriptId) {
+    this.db.prepare('DELETE FROM transcript_lines WHERE transcript_id = ?').run(transcriptId);
+    this.touch(transcriptId);
   }
 
   /** One transcript's header data (as in the list). */
@@ -449,6 +469,7 @@ function publicLine(r) {
     text: r.text,
     edited: Boolean(r.edited),
     speaker: {
+      manual: Boolean(r.speaker_manual), // chosen by a user
       key: r.speaker_key,
       voiceId: voice ? r.voice_id : null,
       name: voice ? r.voice_name : r.speaker_label,

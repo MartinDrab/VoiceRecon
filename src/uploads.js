@@ -154,6 +154,43 @@ class UploadQueue {
   }
 
   /**
+   * Transcribes a saved transcript again from its kept audio (audio-store.js), with the current
+   * models, voices and names: once its turn comes, its lines are replaced by the new ones. Queued
+   * like uploaded files, behind live listening; stopping keeps what is done.
+   * @param {number} transcriptId
+   */
+  again(transcriptId) {
+    this.transcripts.get(transcriptId);
+    if (this.transcripts.recording.has(transcriptId)) throw new HttpError(409, 'Wait until the transcript is finished.');
+    const pieces = this.audio ? this.audio.pieces(transcriptId) : [];
+    if (!pieces.length) throw new HttpError(400, 'This transcript has no audio.');
+    const status = { state: 'queued', done: 0, total: pieces.reduce((n, p) => n + p.seconds, 0) };
+    /** @type {(value?: unknown) => void} */
+    let resolveDone = () => {};
+    const done = new Promise((resolve) => {
+      resolveDone = resolve;
+    });
+    this.audio.hold(pieces.map((p) => p.name)); // not deleted for the size limit meanwhile
+    this.waiting.push({
+      id: transcriptId,
+      // Each piece in its own session (live sessions were separate too), at its own times.
+      pieces: pieces.map((p, i) => ({ name: p.name, file: p.file, dataStart: p.dataStart, bytes: Math.round(p.seconds * 16000) * 2, start: p.start, session: i + 1 })),
+      status,
+      cancelled: false,
+      done,
+      resolveDone,
+    });
+    this.transcripts.processing.set(transcriptId, status);
+    this.transcripts.setRecording(transcriptId, true);
+    this.pump();
+  }
+
+  /** Whether a file of this transcript waits or is being transcribed. */
+  busy(transcriptId) {
+    return Boolean((this.running && this.running.id === transcriptId) || this.waiting.some((j) => j.id === transcriptId));
+  }
+
+  /**
    * Stops transcribing a transcript's file; the lines found so far stay. Resolves once it has
    * stopped, with whether it was running or queued.
    */
@@ -190,16 +227,20 @@ class UploadQueue {
   }
 
   finished(job) {
-    // What was transcribed of the recording is kept with its transcript, so its lines can be played;
-    // the file covers the transcript from the part's start (offset).
-    try {
-      if (this.audio && this.audio.keep && job.status.done > 0 && this.transcripts.exists(job.id)) {
-        this.audio.add(job.id, job.file, { start: job.offset, dataStart: job.dataStart, move: true });
+    if (job.pieces) {
+      this.audio.release(job.pieces.map((p) => p.name)); // transcribed again: the audio stays as it was
+    } else {
+      // What was transcribed of the recording is kept with its transcript, so its lines can be
+      // played; the file covers the transcript from the part's start (offset).
+      try {
+        if (this.audio && this.audio.keep && job.status.done > 0 && this.transcripts.exists(job.id)) {
+          this.audio.add(job.id, job.file, { start: job.offset, dataStart: job.dataStart, move: true });
+        }
+      } catch (err) {
+        console.warn(`Transcript ${job.id}: keeping its audio failed: ${err.message}`);
       }
-    } catch (err) {
-      console.warn(`Transcript ${job.id}: keeping its audio failed: ${err.message}`);
+      fs.rmSync(job.file, { force: true });
     }
-    fs.rmSync(job.file, { force: true });
     this.transcripts.setRecording(job.id, false);
     if (job.status.state !== 'failed') this.transcripts.processing.delete(job.id);
     job.resolveDone();
@@ -212,6 +253,26 @@ class UploadQueue {
       await sleep(1000);
     }
     job.status.state = 'transcribing';
+    // An uploaded file is one piece; a transcript transcribed again has a piece per live session or file.
+    const pieces = job.pieces || [{ file: job.file, dataStart: job.dataStart, bytes: job.dataBytes, start: job.offset, session: 1 }];
+    if (job.pieces) {
+      // Wall-clock times of the new lines come from the old ones (live sessions may be days apart).
+      job.clock = this.transcripts.wallClock(job.id);
+      this.transcripts.clearLines(job.id);
+    }
+    let before = 0; // seconds of the pieces done
+    for (const piece of pieces) {
+      if (job.cancelled) break;
+      job.piece = piece;
+      await this.feed(job, piece, before);
+      before += piece.bytes / BYTES_PER_SECOND;
+    }
+    this.regroup(job); // also when stopped: the lines that are there
+    if (!job.pieces) this.transcripts.extendDuration(job.id, job.offset + job.status.done);
+  }
+
+  /** Feeds one piece of audio through a TranscriptionSession; its lines are saved as they come. */
+  async feed(job, piece, before) {
     let failure = null;
     const session = new TranscriptionSession(this.engine, this.voices, { interim: false, learn: false, background: true });
     session.on('message', (m) => {
@@ -220,11 +281,11 @@ class UploadQueue {
     session.on('error', (err) => {
       failure = err;
     });
-    const fh = await fs.promises.open(job.file, 'r');
+    const fh = await fs.promises.open(piece.file, 'r');
     try {
       const buf = Buffer.alloc(STEP);
-      for (let pos = 0; pos < job.dataBytes && !job.cancelled && !failure;) {
-        const { bytesRead } = await fh.read(buf, 0, Math.min(STEP, job.dataBytes - pos), job.dataStart + pos);
+      for (let pos = 0; pos < piece.bytes && !job.cancelled && !failure;) {
+        const { bytesRead } = await fh.read(buf, 0, Math.min(STEP, piece.bytes - pos), piece.dataStart + pos);
         if (!bytesRead) break;
         for (let o = 0; o < bytesRead && !job.cancelled; o += PIECE) {
           session.push(int16ToFloat(buf.subarray(o, Math.min(o + PIECE, bytesRead))));
@@ -232,12 +293,10 @@ class UploadQueue {
         }
         await session.settled();
         pos += bytesRead;
-        job.status.done = pos / BYTES_PER_SECOND;
+        job.status.done = before + pos / BYTES_PER_SECOND;
       }
       if (!job.cancelled && !failure) await session.finish();
       if (failure) throw failure;
-      this.regroup(job); // also when stopped: the lines that are there
-      this.transcripts.extendDuration(job.id, job.offset + job.status.done);
     } finally {
       session.close();
       await fh.close();
@@ -247,12 +306,14 @@ class UploadQueue {
   save(job, session, m) {
     if (job.cancelled) return;
     const recent = session.recent.get(m.id) || {};
-    const speaker = this.transcripts.speakerFields(m.speaker, 1);
+    const { start: offset, session: sessionNo } = job.piece;
+    const speaker = this.transcripts.speakerFields(m.speaker, sessionNo);
+    const start = m.start + offset;
     try {
       this.transcripts.appendLine(job.id, {
-        start: m.start + job.offset,
-        end: m.end + job.offset,
-        spokenAt: job.startedAt + Math.round((m.start + job.offset) * 1000),
+        start,
+        end: m.end + offset,
+        spokenAt: job.clock ? wallTime(job.clock, start) : job.startedAt + Math.round(start * 1000),
         speaker,
         text: m.text,
         seconds: recent.seconds,
@@ -277,6 +338,19 @@ class UploadQueue {
       console.warn(`Transcript ${job.id}: deciding its speakers per recording failed: ${err.message}`);
     }
   }
+}
+
+/**
+ * The wall-clock time (ms) of transcript time `t`, from the lines it had: [[start, spokenAt]] by
+ * start; the closest line before it (or the first) counts.
+ */
+function wallTime(clock, t) {
+  let best = clock[0];
+  for (const c of clock) {
+    if (c[0] > t) break;
+    best = c;
+  }
+  return best ? Math.round(best[1] + (t - best[0]) * 1000) : Date.now();
 }
 
 module.exports = { UploadQueue, readHeader, titleFromName, MAX_HOURS };

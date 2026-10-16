@@ -293,6 +293,17 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.deepStrictEqual(reference.map((r) => r.speaker), turnsOf(expected.map((e) => e.voice)));
     assert.strictEqual(fs.statSync(path.join(caseDir, 'conversation.wav')).size, recording.length);
     assert.deepStrictEqual(fs.readdirSync(path.join(caseDir, 'voices')).sort(), ['coqui', 'jirka']);
+    // transcribing it again from its audio replaces the lines (a correction is gone), keeping their times
+    const fixedLine = file.lines[2];
+    await call('PATCH', `/api/transcripts/${fileId}/lines/${fixedLine.id}`, { text: 'Ruční oprava.' });
+    assert.deepStrictEqual(await call('POST', `/api/transcripts/${fileId}/again`), { queued: true });
+    await assert.rejects(call('POST', `/api/transcripts/${fileId}/again`), /409/);
+    const again = await untilDone(fileId);
+    assert.deepStrictEqual(again.lines.map((l) => names[l.speaker.voiceId]), expected.map((e) => e.voice));
+    assert.ok(again.lines.every((l) => !l.edited && l.text !== 'Ruční oprava.'), 'the lines are new');
+    assert.ok(again.lines.every((l, i) => Math.abs(l.start - file.lines[i].start) < 0.01), 'at the same times');
+    assert.ok(Math.abs(again.lines[1].spokenAt - file.lines[1].spokenAt) < 50, 'and the same wall-clock times');
+    assert.ok(Math.abs(again.transcript.duration - file.transcript.duration) < 0.01);
     assert.deepStrictEqual(await call('DELETE', `/api/transcripts/${fileId}/audio`), { deleted: true });
     assert.strictEqual((await call('GET', `/api/transcripts/${fileId}`)).transcript.audio, false);
     assert.strictEqual((await fetch(`${base}/api/transcripts/${fileId}/audio`, { headers: { cookie } })).status, 404);

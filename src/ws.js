@@ -27,6 +27,7 @@ function sameOrigin(req) {
  *                          { type: 'newTranscript' } |
  *                          { type: 'saveUnknown', speakerId, name, color } |
  *                          { type: 'assignUnknown', speakerId, voiceId } |
+ *                          { type: 'mergeUnknown', speakerId, intoId } |
  *                          { type: 'correct', ids: [final ids], voiceId }
  * Server -> client (JSON): hello, status, voices, transcript, partial, final, relabel, stopped,
  *                          saved, corrected, error
@@ -193,7 +194,9 @@ function attachWebSocket(server, { auth, engine, voices, transcripts, audio = nu
       try {
         if (m.type === 'final') saveFinal(m);
         else if (m.type === 'relabel' && live.transcriptId && m.from.kind === 'unknown') {
-          ignoreMissing(() => transcripts.setSpeaker(live.transcriptId, { key: `u:${live.sessionNo}:${m.from.id}` }, { voiceId: m.to.id }));
+          // To a voice (saved or assigned), or to another unknown speaker (merged).
+          const to = m.to.kind === 'voice' ? { voiceId: m.to.id } : { key: `u:${live.sessionNo}:${m.to.id}` };
+          ignoreMissing(() => transcripts.setSpeaker(live.transcriptId, { key: `u:${live.sessionNo}:${m.from.id}` }, to));
         }
       } catch (err) {
         console.error('Could not save the transcript:', err.message);
@@ -269,6 +272,13 @@ function attachWebSocket(server, { auth, engine, voices, transcripts, audio = nu
           (voiceId) => send({ type: 'saved', speakerId: msg.speakerId, voiceId }),
           (err) => send({ type: 'error', message: tr(err) }),
         );
+      } else if (msg.type === 'mergeUnknown') {
+        try {
+          if (!session) throw new Error('No transcription is running.');
+          session.mergeUnknown(msg.speakerId, msg.intoId);
+        } catch (err) {
+          send({ type: 'error', message: tr(err) });
+        }
       } else if (msg.type === 'assignUnknown' || msg.type === 'correct') {
         try {
           if (!session) throw new Error('No transcription is running.');

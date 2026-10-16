@@ -280,9 +280,18 @@ api.get('/transcripts/:id/audio', user, async (req, res) => {
   const filename = req.query.download ? `${transcripts.fileBase(tid)}.wav` : undefined;
   await audio.send(res, tid, { from, to, filename });
 });
+// Transcribes the transcript again from its audio with the current models and voices (replacing its lines).
+api.post('/transcripts/:id/again', user, (req, res) => {
+  const t = ownTranscript(req);
+  if (!t) throw new HttpError(403, 'Only the author or an administrator can transcribe this again.');
+  if (uploads.busy(t.id)) throw new HttpError(409, 'Wait until the transcript is finished.');
+  uploads.again(t.id);
+  res.status(202).json({ queued: true });
+});
 api.delete('/transcripts/:id/audio', user, (req, res) => {
   const t = ownTranscript(req);
   if (!t) throw new HttpError(403, 'Only the author or an administrator can delete this audio.');
+  if (uploads.busy(t.id)) throw new HttpError(409, 'Wait until the transcript is finished.');
   res.json({ deleted: audio.remove(t.id) });
 });
 // Decides the transcript's speakers again per speaker, e.g. after someone in it was enrolled.

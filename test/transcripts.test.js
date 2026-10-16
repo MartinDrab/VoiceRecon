@@ -157,6 +157,26 @@ test('speakers of a saved transcript are decided again; speakers a user chose st
   db.close();
 });
 
+test('two speakers of a transcript are merged into one; lines can be cleared for transcribing again', () => {
+  const { db, store } = setup();
+  const t = store.create(1);
+  const say = (start, n) => store.appendLine(t.id, {
+    start, end: start + 2, spokenAt: 1000 * start, speaker: { voiceId: null, key: `u:1:u${n}`, label: `Speaker ${n}` }, text: `Věta ${start}.`,
+  });
+  say(0, 2);
+  say(3, 5);
+  say(6, 2);
+  store.setSpeaker(t.id, { key: 'u:1:u2' }, { key: 'u:1:u5' }); // "Speaker 2" is "Speaker 5"
+  assert.deepStrictEqual(store.lines(t.id).map((l) => [l.speaker.name, l.speaker.manual]), [['Speaker 5', true], ['Speaker 5', false], ['Speaker 5', true]]);
+  assert.throws(() => store.setSpeaker(t.id, { key: 'u:1:u5' }, { key: 'u:9:u9' }), /not in this transcript/);
+
+  assert.deepStrictEqual(store.wallClock(t.id), [[0, 0], [3, 3000], [6, 6000]]);
+  store.clearLines(t.id);
+  assert.deepStrictEqual(store.lines(t.id), []);
+  assert.strictEqual(store.list({ q: 'veta' }).total, 0, 'gone from search too');
+  db.close();
+});
+
 test('editing, moving and deleting lines keeps search up to date', () => {
   const { db, voices, store, jirka, klara } = setup();
   const t = store.create(1);

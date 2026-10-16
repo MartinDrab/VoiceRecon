@@ -527,6 +527,24 @@ class TranscriptionSession extends EventEmitter {
     return this.voices.learnCorrections(voiceId, items);
   }
 
+  /** The user says that two unknown speakers of this session are one person. */
+  mergeUnknown(fromId, intoId) {
+    const from = this.unknown.find((x) => x.id === fromId);
+    const into = this.unknown.find((x) => x.id === intoId);
+    if (!from || !into || from === into) throw new Error('That speaker is no longer available in this session.');
+    if (from.saving || into.saving) throw new Error('That speaker is being saved as a new voice.');
+    into.centroid = l2normalize(into.centroid.map((x, i) => x * into.count + from.centroid[i] * from.count));
+    into.count += from.count;
+    for (const a of from.audio) {
+      if (into.audioLen >= UNKNOWN_AUDIO_LIMIT) break;
+      into.audio.push(a);
+      into.audioLen += a.length;
+    }
+    this.unknown = this.unknown.filter((x) => x !== from);
+    if (this.lastSpeaker && this.lastSpeaker.id === fromId) this.lastSpeaker = unknownRef(into);
+    this.emit('message', { type: 'relabel', from: unknownRef(from), to: unknownRef(into) });
+  }
+
   /** The user says that an unknown speaker of this session is in fact an existing voice. */
   assignUnknown(unknownId, voiceId) {
     const u = this.unknown.find((x) => x.id === unknownId);

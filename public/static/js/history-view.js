@@ -93,6 +93,7 @@ function renderHeader() {
   $('export-wav').classList.toggle('hidden', !transcript.audio);
   $('delete-audio').classList.toggle('hidden', !(transcript.audio && mayDelete()));
   $('regroup').classList.toggle('hidden', isLive());
+  $('again').classList.toggle('hidden', !(transcript.audio && mayDelete() && !isLive()));
   $('delete').classList.toggle('hidden', !mayDelete());
   $('stop').classList.toggle('hidden', !(isProcessing() && mayDelete()));
   if (query) $('back').href = `/history?q=${encodeURIComponent(query)}`;
@@ -129,7 +130,7 @@ function lineRow(line) {
     text,
     line.id === editing ? null : h('div.hline-actions', {},
       transcript.audio ? h('button.btn.btn-ghost.btn-icon.btn-sm', {
-        title: playing ? t('Stop playing') : t('Play this line'),
+        title: playing ? t('Stop playing') : t('Play from here'),
         'aria-pressed': String(playing),
         onclick: () => playLine(line),
       }, icon(playing ? 'stop' : 'play')) : null,
@@ -140,7 +141,8 @@ function lineRow(line) {
 
 // ---------- playing lines ----------
 
-let player = null; // { audio: HTMLAudioElement, lineId } while a line plays
+// While the audio plays: { audio, from (transcript time of its start), lineId (the line being said) }
+let player = null;
 
 function refreshLine(lineId) {
   const el = document.getElementById(`line-${lineId}`);
@@ -157,17 +159,40 @@ function stopPlaying() {
   refreshLine(lineId);
 }
 
-/** Plays a line from the transcript's audio; the same line again stops it. */
+/** The line being said at transcript time `time`: the last one that started by then. */
+function lineAt(time) {
+  let found = null;
+  for (const l of lines) {
+    if (l.start > time + 0.05) break;
+    found = l;
+  }
+  return found;
+}
+
+/**
+ * Plays the transcript's audio from a line onward, highlighting each line as it is said (to
+ * proofread by listening); the playing line's button stops it.
+ */
 function playLine(line) {
   const again = player && player.lineId === line.id;
   stopPlaying();
   if (again) return;
-  // A little more on both sides: a line's first and last sounds are often right at its edges.
-  const from = Math.max(0, line.start - 0.2).toFixed(2);
-  const to = (line.end + 0.3).toFixed(2);
-  const audio = new Audio(`/api/transcripts/${tid}/audio?start=${from}&end=${to}`);
+  // A little before the line: its first sounds are often right at its edge.
+  const from = Math.max(0, line.start - 0.2);
+  const audio = new Audio(`/api/transcripts/${tid}/audio?start=${from.toFixed(2)}`);
   const current = () => player && player.audio === audio;
-  player = { audio, lineId: line.id };
+  player = { audio, from, lineId: line.id };
+  audio.addEventListener('timeupdate', () => {
+    if (!current()) return;
+    const now = lineAt(from + audio.currentTime);
+    if (!now || now.id === player.lineId) return;
+    const before = player.lineId;
+    player.lineId = now.id;
+    refreshLine(before);
+    refreshLine(now.id);
+    const el = document.getElementById(`line-${now.id}`);
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
   audio.addEventListener('ended', () => {
     if (current()) stopPlaying();
   });
@@ -256,6 +281,14 @@ function openSpeaker(lineIds, speaker) {
       onclick: () => (current ? $('speaker-dialog').close() : apply({ voiceId: v.id })),
     }, h('span.swatch'), h('span', {}, v.name), current ? h('span.current', {}, t('current')) : null);
   }));
+  // Speakers of this transcript without a voice: "Speaker 2" may be "Speaker 5" (merging them).
+  const others = transcript.speakers.filter((s) => s.voiceId === null && s.key !== speaker.key && s.key !== '?');
+  $('others').replaceChildren(...others.map((s) => h('button.voice-choice', {
+    type: 'button',
+    style: { '--c': speakerColor(s) },
+    onclick: () => apply({ key: s.key }),
+  }, h('span.swatch'), h('span', {}, speakerLabel(s.name)), h('span.muted.small', {}, plural(s.lines, '{n} line', '{n} lines')))));
+  $('others-section').classList.toggle('hidden', !others.length);
   $('other-name').value = speaker.voiceId ? '' : name;
   $('speaker-error').textContent = '';
   $('speaker-dialog').showModal();
@@ -308,6 +341,22 @@ $('stop').addEventListener('click', async () => {
   stopping = false;
 });
 $('refresh').addEventListener('click', () => load().catch((err) => toast(err.message, { error: true })));
+$('again').addEventListener('click', async () => {
+  // Corrections are made on the lines, which are replaced.
+  const corrected = lines.filter((l) => l.edited || l.speaker.manual).length;
+  const question = corrected
+    ? plural(corrected, 'Transcribe it again from its audio, with the current models, voices and names? Its lines are replaced, and the corrections in {n} line are lost.',
+      'Transcribe it again from its audio, with the current models, voices and names? Its lines are replaced, and the corrections in {n} lines are lost.')
+    : t('Transcribe it again from its audio, with the current models, voices and names? Its lines are replaced.');
+  if (!confirm(question)) return;
+  try {
+    stopPlaying();
+    await api(`/transcripts/${tid}/again`, { method: 'POST' });
+    await load();
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
+});
 $('regroup').addEventListener('click', async () => {
   try {
     const { moved } = await api(`/transcripts/${tid}/regroup`, { method: 'POST' });
