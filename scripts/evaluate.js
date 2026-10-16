@@ -43,7 +43,7 @@ Options:
   --split-middle <list>        cut out a stretch of someone else in the middle (A–B–A): 0 = off, 1 = on
   --join-similarity <list>     similarity at which a line joins an unknown speaker, e.g. 0.4,0.5,0.6
   --regroup <list>             decide speakers per recording afterwards, as for uploaded files, merging
-                               speakers at this similarity (0 = off: per line, as live), e.g. 0,0.6
+                               speakers at this similarity (0 = off: per line, as live), e.g. 0,0.5
   --learn <list>               learn from clearly recognized lines during the run: 0 = off, 1 = on
   --details <file>             write word-by-word differences of the best run
   --json <file>                write all results as JSON`;

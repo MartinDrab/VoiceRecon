@@ -20,9 +20,11 @@
 const { cosine, l2normalize } = require('./speech/engine');
 
 // Speakers' averages at least this similar are one person (averages of one person in one recording
-// score far higher than single lines). On two test conversations of four real speakers, two of them
-// not enrolled, 0.5-0.7 gave the same result; 0.6 is the match threshold for saved voices too.
-const MERGE_SIMILARITY = 0.6;
+// score far higher than single lines). On five test conversations of four real speakers (none to all
+// of them enrolled), the words credited to the right person rose from 89.4 % to 92.1 % on average at
+// 0.5, and to 91.3 % at 0.6; 0.5 was never worse than 0.6 or 0.7. It is also the similarity at
+// which a line joins an unknown speaker (JOIN_SIMILARITY in transcriber.js).
+const MERGE_SIMILARITY = 0.5;
 // A line moves when it is at least this much more similar to another speaker than to its own.
 const MOVE_MARGIN = 0.1;
 const MIN_SECONDS = 3; // speech a speaker needs before its average counts

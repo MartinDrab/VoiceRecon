@@ -164,7 +164,17 @@ path is longer than 260 characters.
 4. A finished utterance is transcribed with a little padding around it. One shorter than 2.5 s is transcribed after the last 4 s of speech that came before it, and only its own words are kept: alone, the recognizer often took a short Czech phrase for English ("Ukrajincům" came out as "Uh Ukraine Soom"). Sliding 1.5 s voice prints check whether the speaker changes inside it: first where one saved voice clearly takes over from another, then where two parts simply sound different (for people without a saved voice). When one person speaks before and after someone else, that stretch in the middle is cut out with two cuts, because no single cut separates them. Each part is matched against the saved voices. If no voice reaches the threshold, the part goes to the closest unknown speaker of this session that it resembles at least 0.5 (less strict than the match threshold: an unknown speaker's voice print comes from a few short lines), or starts a new one. A long stretch of one speaker is split into lines at sentence ends (each line at least 3 s long).
 5. Final lines replace the interim text in the browser. Changes made on the Voices page (names, colors) show up in open transcripts immediately.
 
-An uploaded recording goes through the same steps, without interim results and at a lower priority than live listening. Once its last line is out, the speakers are decided again per speaker instead of per line ([src/regroup.js](src/regroup.js)): the lines of each speaker are averaged into one voice print of often minutes of speech; speakers whose averages sound alike are merged (one guest split into *Speaker 2* and *Speaker 5*, or an enrolled person whose lines missed the threshold), a line that sounds clearly more like another speaker moves there, an unknown speaker whose average matches a saved voice gets its name, and the unknown speakers are numbered again. Two saved voices are never merged, and lines someone moved by hand meanwhile stay. On two test conversations built from four real speakers (two of them not enrolled each time, turns 0.1–0.8 s apart), the words credited to the right person rose from 89.2 % to 91.4 % and from 92.7 % to 93.1 %, and the two unenrolled people showed up as 7 speakers instead of 8 and 10 instead of 11.
+An uploaded recording goes through the same steps, without interim results and at a lower priority than live listening. Once its last line is out, the speakers are decided again per speaker instead of per line ([src/regroup.js](src/regroup.js)): the lines of each speaker are averaged into one voice print of often minutes of speech; speakers whose averages sound alike are merged (one guest split into *Speaker 2* and *Speaker 5*, or an enrolled person whose lines missed the threshold), a line that sounds clearly more like another speaker moves there, an unknown speaker whose average matches a saved voice gets its name, and the unknown speakers are numbered again. Two saved voices are never merged, and lines someone moved by hand meanwhile stay. Five test conversations of 8–9 minutes were built from four real speakers (turns 0.1–0.8 s apart, so some turns run together), with none to all of them enrolled. The words credited to the right person rose like this (merging speakers whose averages are at least 0.5 alike):
+
+| Enrolled | Per line | Per speaker |
+|---|---|---|
+| 2 of 4 | 89.2 % | 91.4 % |
+| 2 of 4 (the other two) | 92.7 % | 93.1 % |
+| 3 of 4 | 89.2 % | 96.8 % |
+| none | 87.4 % | 89.5 % |
+| all 4 | 88.3 % | 89.9 % |
+
+Merging at 0.6 or 0.7 was never better and on three of them worse (87.4 % instead of 89.5 % with nobody enrolled).
 
 ### How voices are matched
 
@@ -283,7 +293,7 @@ npm run evaluate -- my-meeting --app-voices --threshold 0.5,0.55,0.6,0.65 --min-
 |---|---|
 | `--threshold` | match threshold for saved voices (set the winner on the Voices page) |
 | `--min-silence` | seconds of silence that end an utterance (`minSilence` in `src/speech/engine.js`) |
-| `--regroup` | `0,0.6` compares naming speakers per line (live listening) with deciding them per speaker afterwards (uploaded files, `MERGE_SIMILARITY` in `src/regroup.js`; the number is how alike two speakers' averages must be to merge) |
+| `--regroup` | `0,0.5` compares naming speakers per line (live listening) with deciding them per speaker afterwards (uploaded files, `MERGE_SIMILARITY` in `src/regroup.js`; the number is how alike two speakers' averages must be to merge) |
 | `--join-similarity` | how similar a line must be to an unknown speaker to join it rather than start a new one (`JOIN_SIMILARITY` in `src/transcriber.js`, 0.5) |
 | `--change-similarity` | how different two parts of one utterance must sound to be split between speakers (`CHANGE_MAX_SIMILARITY` in `src/transcriber.js`). In an echoey room people sound more alike; try 0.3,0.5,0.6 |
 | `--split-middle` | `0,1` compares the split into speakers without and with cutting out a middle stretch (one person speaking before and after someone else without a pause) |
