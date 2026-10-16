@@ -55,6 +55,7 @@ module.exports = {
   'Choose a voice.': 'Vyberte hlas.',
   'That speaker is no longer available in this session.': 'Tento mluvčí už v této relaci není k dispozici.',
   'That speaker is being saved as a new voice.': 'Tento mluvčí se právě ukládá jako nový hlas.',
+  'The start of the part must be a number of seconds.': 'Začátek části musí být počet sekund.',
 
   // saved transcripts
   'Transcript not found.': 'Přepis nebyl nalezen.',

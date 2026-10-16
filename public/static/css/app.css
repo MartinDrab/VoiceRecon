@@ -560,6 +560,8 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .length-choice { display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.9rem; border: 0; padding: 0; margin: 0; min-width: 0; }
 .length-choice label.check { flex-wrap: wrap; }
 label.check input.length-input { width: 6.5rem; height: auto; padding: 0.3rem 0.5rem; }
+/* "from [start] for [length]" on its own line, under the text of its radio button */
+.length-fields { display: flex; flex-basis: 100%; align-items: center; gap: 0.5rem; padding-left: calc(16px + 0.5rem); white-space: nowrap; }
 @media (hover: none) { .hline-actions { opacity: 1; } }
 @media (max-width: 640px) {
   .hline { grid-template-columns: 1fr auto; }

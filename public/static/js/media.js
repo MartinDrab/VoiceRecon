@@ -11,13 +11,16 @@ import { parseMp4Audio, parseWavHeader } from './containers.js';
 
 const SLICE = 4 << 20; // bytes read from the file at a time
 const QUEUE = 64; // encoded frames waiting in the decoder at most
+// Each AAC frame overlaps the one before, so a part that starts inside a file is decoded from a few
+// frames earlier, and what those give before the start is dropped.
+const PREROLL = 2;
 
 /**
  * @typedef {object} AudioFile
  * @property {number} duration in seconds
- * @property {(limit: number, onProgress?: (fraction: number) => void, signal?: AbortSignal) =>
- *   Promise<{ wav: Blob, seconds: number }>} read the first `limit` seconds (Infinity: all) as a
- *   16 kHz mono WAV, and the whole file's length
+ * @property {(start: number, limit: number, onProgress?: (fraction: number) => void, signal?: AbortSignal) =>
+ *   Promise<{ wav: Blob, seconds: number }>} read `limit` seconds (Infinity: to the end) from
+ *   `start` seconds as a 16 kHz mono WAV, and the whole file's length
  */
 
 /**
@@ -41,6 +44,7 @@ export async function openAudioFile(file) {
 class Output {
   constructor(limit) {
     this.max = Number.isFinite(limit) ? Math.round(limit * SAMPLE_RATE) : Infinity;
+    this.skip = 0; // samples still to drop: decoded from before the part's start
     this.chunks = [];
     this.length = 0;
   }
@@ -50,6 +54,11 @@ class Output {
   }
 
   push(samples) {
+    if (this.skip) {
+      const dropped = Math.min(this.skip, samples.length);
+      samples = samples.subarray(dropped);
+      this.skip -= dropped;
+    }
     const n = Math.min(samples.length, this.max - this.length);
     if (n <= 0) return;
     const pcm = new Int16Array(n);
@@ -75,16 +84,18 @@ function wavReader(file, h) {
   const duration = frames / h.sampleRate;
   return {
     duration,
-    async read(limit, onProgress, signal) {
+    async read(start, limit, onProgress, signal) {
       const out = new Output(limit);
       const resampler = new Resampler(h.sampleRate, SAMPLE_RATE);
-      const end = h.dataStart + Math.min(frames, Math.ceil(Math.min(limit, duration) * h.sampleRate)) * h.blockAlign;
+      const first = Math.min(frames, Math.floor(start * h.sampleRate));
+      const begin = h.dataStart + first * h.blockAlign;
+      const end = h.dataStart + Math.min(frames, first + Math.ceil(limit * h.sampleRate)) * h.blockAlign;
       const step = Math.floor(SLICE / h.blockAlign) * h.blockAlign;
-      for (let pos = h.dataStart; pos < end && !out.full; pos += step) {
+      for (let pos = begin; pos < end && !out.full; pos += step) {
         if (signal && signal.aborted) throw cancelled();
         const bytes = await file.slice(pos, Math.min(end, pos + step)).arrayBuffer();
         out.push(resampler.push(wavMono(new DataView(bytes), h)));
-        if (onProgress) onProgress(Math.min(1, (pos + step - h.dataStart) / (end - h.dataStart)));
+        if (onProgress) onProgress(Math.min(1, (pos + step - begin) / (end - begin)));
       }
       out.push(resampler.flush());
       return { wav: out.blob(), seconds: duration };
@@ -166,16 +177,20 @@ function mono(data) {
 function mp4Reader(file, track) {
   return {
     duration: track.duration,
-    async read(limit, onProgress, signal) {
+    async read(start, limit, onProgress, signal) {
       const out = new Output(limit);
-      const until = Math.min(limit, track.duration);
+      const until = Math.min(start + limit, track.duration);
       /** @type {Resampler | null} */
       let resampler = null; // set by the decoder's output callback
       let failure = null;
       const decoder = new AudioDecoder({
         output: (data) => {
           try {
-            if (!resampler) resampler = new Resampler(data.sampleRate, SAMPLE_RATE); // HE-AAC may double the rate
+            if (!resampler) {
+              resampler = new Resampler(data.sampleRate, SAMPLE_RATE); // HE-AAC may double the rate
+              // Output begins at the first decoded frame's time; the part begins at `start`.
+              out.skip = Math.max(0, Math.round((start - data.timestamp / 1e6) * SAMPLE_RATE));
+            }
             out.push(resampler.push(mono(data)));
           } catch (err) {
             failure = err;
@@ -189,11 +204,14 @@ function mp4Reader(file, track) {
       });
       decoder.configure(decoderConfig(track));
       const { offsets, sizes, starts } = track;
-      let last = 0; // frames needed: those starting before the limit (and one more)
+      let first = 0; // the frame the part starts in, less the preroll
+      while (first + 1 < starts.length && starts[first + 1] <= start) first++;
+      first = Math.max(0, first - PREROLL);
+      let last = first; // frames needed: those starting before the end of the part (and one more)
       while (last < starts.length && starts[last] < until) last++;
       last = Math.min(starts.length, last + 1);
       try {
-        for (let i = 0; i < last && !failure;) {
+        for (let i = first; i < last && !failure;) {
           if (signal && signal.aborted) throw cancelled();
           // A run of frames stored one after another, read at once.
           const from = offsets[i];
@@ -209,7 +227,7 @@ function mp4Reader(file, track) {
           }
           i = j;
           while (decoder.decodeQueueSize > QUEUE && !failure) await dequeued(decoder);
-          if (onProgress) onProgress(Math.min(1, starts[i - 1] / until));
+          if (onProgress) onProgress(Math.max(0, Math.min(1, (starts[i - 1] - start) / (until - start))));
         }
         if (!failure) await decoder.flush();
       } catch (err) {
@@ -247,10 +265,11 @@ function wholeReader(pcm) {
   const duration = pcm.length / SAMPLE_RATE;
   return {
     duration,
-    async read(limit, onProgress) {
-      const n = Number.isFinite(limit) ? Math.min(pcm.length, Math.round(limit * SAMPLE_RATE)) : pcm.length;
+    async read(start, limit, onProgress) {
+      const from = Math.min(pcm.length, Math.round(start * SAMPLE_RATE));
+      const to = Number.isFinite(limit) ? Math.min(pcm.length, from + Math.round(limit * SAMPLE_RATE)) : pcm.length;
       if (onProgress) onProgress(1);
-      return { wav: wavBlob([pcm.subarray(0, n)], SAMPLE_RATE), seconds: duration };
+      return { wav: wavBlob([pcm.subarray(from, to)], SAMPLE_RATE), seconds: duration };
     },
   };
 }

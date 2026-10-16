@@ -13,6 +13,7 @@ const { SAMPLE_RATE } = require('./speech/engine');
 const BYTES_PER_SECOND = SAMPLE_RATE * 2; // 16 kHz mono 16-bit
 const MAX_HOURS = 4;
 const MAX_BYTES = MAX_HOURS * 3600 * BYTES_PER_SECOND + 4096; // plus room for the WAV header
+const MAX_OFFSET = 7 * 24 * 3600; // seconds: where in a (long) recording an uploaded part may start
 const PIECE = BYTES_PER_SECOND; // fed at a time, giving live sessions the event loop in between
 const STEP = 5 * BYTES_PER_SECOND; // then wait until this much audio has been transcribed
 
@@ -105,13 +106,17 @@ class UploadQueue {
    * Saves an uploaded WAV file (the request body, streamed) and queues it.
    * @param {import('http').IncomingMessage} req
    * @param {{ id: number }} user
-   * @param {{ name?: string, startedAt?: number }} options  file name (the title) and when the
-   *   recording started (ms; default now): the lines' times count from it
+   * @param {{ name?: string, startedAt?: number, offset?: number }} options  file name (the title),
+   *   when the recording started (ms; default now): the lines' times count from it, and where in the
+   *   recording the uploaded part starts (seconds; default 0), so that line times match the recording
    * @returns {Promise<number>} the id of the new transcript
    */
-  async add(req, user, { name = '', startedAt } = {}) {
+  async add(req, user, { name = '', startedAt, offset = 0 } = {}) {
     if (Number(req.headers['content-length']) > MAX_BYTES) {
       throw new HttpError(413, 'Recordings may be at most {hours} hours long.', { hours: MAX_HOURS });
+    }
+    if (!(Number.isFinite(offset) && offset >= 0 && offset <= MAX_OFFSET)) {
+      throw new HttpError(400, 'The start of the part must be a number of seconds.');
     }
     const file = path.join(this.dir, `${crypto.randomUUID()}.wav`);
     try {
@@ -131,7 +136,7 @@ class UploadQueue {
       const done = new Promise((resolve) => {
         resolveDone = resolve;
       });
-      this.waiting.push({ id: transcript.id, file, dataStart, dataBytes, startedAt: start, status, cancelled: false, done, resolveDone });
+      this.waiting.push({ id: transcript.id, file, dataStart, dataBytes, startedAt: start, offset, status, cancelled: false, done, resolveDone });
       this.transcripts.processing.set(transcript.id, status);
       this.transcripts.setRecording(transcript.id, true);
       this.pump();
@@ -216,7 +221,7 @@ class UploadQueue {
       }
       if (!job.cancelled && !failure) await session.finish();
       if (failure) throw failure;
-      this.transcripts.extendDuration(job.id, job.status.done);
+      this.transcripts.extendDuration(job.id, job.offset + job.status.done);
     } finally {
       session.close();
       await fh.close();
@@ -228,9 +233,9 @@ class UploadQueue {
     const recent = session.recent.get(m.id) || {};
     try {
       this.transcripts.appendLine(job.id, {
-        start: m.start,
-        end: m.end,
-        spokenAt: job.startedAt + Math.round(m.start * 1000),
+        start: m.start + job.offset,
+        end: m.end + job.offset,
+        spokenAt: job.startedAt + Math.round((m.start + job.offset) * 1000),
         speaker: this.transcripts.speakerFields(m.speaker, 1),
         text: m.text,
         seconds: recent.seconds,

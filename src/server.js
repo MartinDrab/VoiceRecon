@@ -222,13 +222,16 @@ api.get('/transcripts', user, (req, res) => {
   res.json(transcripts.list({ q, limit: Number(req.query.limit), offset: Number(req.query.offset) }));
 });
 // An uploaded recording becomes a transcript in the background. The browser converts any audio file
-// to 16 kHz mono 16-bit WAV; ?name= is the file name (the title), ?startedAt= when it was recorded (ms).
+// to 16 kHz mono 16-bit WAV; ?name= is the file name (the title), ?startedAt= when it was recorded (ms),
+// ?offset= where in the recording the uploaded part starts (seconds; line times count from the start).
 api.post('/transcripts/upload', user, async (req, res) => {
   if (!req.is(['audio/wav', 'audio/x-wav', 'audio/wave'])) {
     throw new HttpError(400, 'Send the recording as a WAV file (Content-Type: audio/wav).');
   }
   const name = typeof req.query.name === 'string' ? req.query.name : '';
-  const transcriptId = await uploads.add(req, req.user, { name, startedAt: Number(req.query.startedAt) });
+  const transcriptId = await uploads.add(req, req.user, {
+    name, startedAt: Number(req.query.startedAt), offset: Number(req.query.offset || 0),
+  });
   res.status(201).json({ id: transcriptId });
 });
 api.post('/transcripts/:id/stop', user, async (req, res) => {

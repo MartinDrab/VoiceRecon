@@ -1,7 +1,8 @@
 // The dialog shown after audio files are chosen for upload (recordings of a voice, a file to
-// transcribe): it shows how long they are and asks whether to use each whole file or only its
-// first part, e.g. the first minute of a long recording of one person. Then it reads just that
-// part (media.js), with progress, as a 16 kHz WAV file to upload.
+// transcribe): it shows how long they are and asks whether to use each whole file or only a part
+// of it, from a start time and for a length, e.g. one minute of a long recording from where one
+// person speaks. Then it reads just that part (media.js), with progress, as a 16 kHz WAV file to
+// upload.
 
 import { h, t, plural, formatClock, formatPercent } from './common.js';
 import { openAudioFile } from './media.js';
@@ -22,8 +23,9 @@ function writeSetting(key, value) {
 }
 
 /**
- * @typedef {{ file: File, wav: Blob, seconds: number }} ChosenFile
- *   wav: 16 kHz mono WAV of the chosen part, to upload; seconds: the whole file's length
+ * @typedef {{ file: File, wav: Blob, seconds: number, start: number }} ChosenFile
+ *   wav: 16 kHz mono WAV of the chosen part, to upload; seconds: the whole file's length;
+ *   start: where the part starts in the file (seconds)
  */
 
 /**
@@ -39,29 +41,31 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
   /** @type {{ file: File, audio: import('./media.js').AudioFile | null, status: HTMLElement }[]} */
   const rows = files.map((file) => ({ file, audio: null, status: h('span.muted', {}, t('reading…')) }));
   const whole = h('input', { type: 'radio', name: 'length', value: 'whole', checked: true });
-  const start = h('input', { type: 'radio', name: 'length', value: 'start' });
-  const length = h('input.length-input', {
+  const part = h('input', { type: 'radio', name: 'length', value: 'part' });
+  // Clicking or typing into a field chooses "only part of it".
+  const field = (value, label) => h('input.length-input', {
     type: 'text',
-    value: formatClock(remembered > 0 ? remembered : defaultLength),
-    'aria-label': t('Length of the part to use'),
+    value,
+    'aria-label': label,
     title: t('Minutes:seconds, e.g. 1:30'),
     autocomplete: 'off',
-    // Clicking or typing into the field chooses "only the first …".
     onfocus: () => {
-      start.checked = true;
+      part.checked = true;
     },
     oninput: () => {
-      start.checked = true;
+      part.checked = true;
     },
   });
-  // "Only the first {0} …": {0} is the length field.
-  const [before, after] = plural(files.length, 'Only the first {0}', 'Only the first {0} of each').split('{0}');
+  const from = field(formatClock(0), t('Where the part starts'));
+  const length = field(formatClock(remembered > 0 ? remembered : defaultLength), t('Length of the part to use'));
+  // "from {0} for {1}": {0} and {1} are the fields.
+  const fields = t('from {0} for {1}').split(/(\{[01]\})/).map((s) => (s === '{0}' ? from : s === '{1}' ? length : s));
   const error = h('p.error-text');
   const submit = h('button.btn.btn-primary', { type: 'submit', disabled: true }, action);
   const cancel = h('button.btn', { type: 'button' }, t('Cancel'));
   const fieldset = h('fieldset.length-choice', {},
     h('label.check', {}, whole, plural(files.length, 'The whole file', 'The whole files')),
-    h('label.check', {}, start, before, length, after));
+    h('label.check', {}, part, plural(files.length, 'Only part of it:', 'Only part of each:'), h('span.length-fields', {}, fields)));
   const form = h('form.dialog-body', {},
     h('h2', {}, title),
     h('ul.file-list', {}, rows.map((r) => h('li', {}, h('span.name', { title: r.file.name }, r.file.name), r.status))),
@@ -88,6 +92,10 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
       submit.disabled = on;
       fieldset.disabled = on;
     };
+    const refuse = (message, input) => {
+      error.textContent = message;
+      if (input) input.focus();
+    };
 
     cancel.addEventListener('click', () => finish(null));
     dialog.addEventListener('cancel', (e) => {
@@ -96,24 +104,24 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
     });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      let start = 0;
       let limit = Infinity;
-      if (start.checked) {
+      if (part.checked) {
+        start = parseLength(from.value);
+        if (!(start >= 0)) return refuse(t('Enter the start as minutes:seconds, e.g. 1:30.'), from);
         limit = parseLength(length.value);
-        if (!(limit > 0)) {
-          error.textContent = t('Enter the length as minutes:seconds, e.g. 1:30.');
-          length.focus();
-          return;
+        if (!(limit > 0)) return refuse(t('Enter the length as minutes:seconds, e.g. 1:30.'), length);
+        const short = readable().find((r) => r.audio.duration <= start);
+        if (short) {
+          return refuse(t('“{name}” is only {length} long.', { name: short.file.name, length: formatClock(short.audio.duration) }), from);
         }
-        // A length above the maximum only matters for a file that is longer than the maximum.
-        if (limit > maxSeconds && tooLong()) {
-          error.textContent = t('At most {max} can be used.', { max: formatClock(maxSeconds) });
-          length.focus();
-          return;
+        // A length above the maximum only matters where the rest of a file is longer than that.
+        if (readable().some((r) => Math.min(limit, r.audio.duration - start) > maxSeconds)) {
+          return refuse(t('At most {max} can be used.', { max: formatClock(maxSeconds) }), length);
         }
         writeSetting(storeKey, formatClock(limit));
       } else if (tooLong()) {
-        error.textContent = t('A recording may be at most {max} long: use only its first part.', { max: formatClock(maxSeconds) });
-        return;
+        return refuse(t('A recording may be at most {max} long: use only a part of it.', { max: formatClock(maxSeconds) }));
       }
       // Read the chosen part of each file now (only that part is decoded where the format allows).
       error.textContent = '';
@@ -125,9 +133,9 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
         };
         show(0);
         try {
-          const { wav, seconds } = await r.audio.read(limit, show, controller.signal);
+          const { wav, seconds } = await r.audio.read(start, limit, show, controller.signal);
           r.status.textContent = formatClock(seconds);
-          chosen.push({ file: r.file, wav, seconds });
+          chosen.push({ file: r.file, wav, seconds, start });
         } catch (err) {
           if (done) return;
           r.status.textContent = formatClock(r.audio.duration || 0);
@@ -160,11 +168,11 @@ export function chooseFileLength(files, { title, action, maxSeconds, storeKey, d
       if (!readable().length) return;
       submit.disabled = false;
       if (tooLong()) {
-        // Too long as a whole: offer the first part, at most as long as allowed.
-        start.checked = true;
+        // Too long as a whole: offer a part, at most as long as allowed.
+        part.checked = true;
         if (!(parseLength(length.value) <= maxSeconds)) length.value = formatClock(maxSeconds);
       }
-      if (document.activeElement !== length) submit.focus();
+      if (document.activeElement !== from && document.activeElement !== length) submit.focus();
     })();
   });
 }

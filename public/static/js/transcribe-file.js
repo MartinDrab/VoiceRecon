@@ -42,7 +42,7 @@ async function chooseAndUpload(file, open) {
     defaultLength: 10 * 60,
   });
   if (!chosen || !chosen.length || card) return;
-  const { wav, seconds } = chosen[0];
+  const { wav, seconds, start } = chosen[0];
 
   const controller = new AbortController();
   const text = h('span.grow');
@@ -66,9 +66,11 @@ async function chooseAndUpload(file, open) {
   show(0);
   document.body.append(own);
   try {
-    // The recording most likely ended when the file was last written; times count from its start.
+    // The recording most likely ended when the file was last written; times count from its start,
+    // also when only a part from later in the file is transcribed (offset: where it starts).
     const ended = file.lastModified ? Math.min(file.lastModified, Date.now()) : Date.now();
     const params = new URLSearchParams({ name: file.name, startedAt: String(Math.max(1, ended - Math.round(seconds * 1000))) });
+    if (start > 0) params.set('offset', String(start));
     const r = await upload(`/transcripts/upload?${params}`, wav, { signal: controller.signal, onProgress: show });
     if (open) {
       location.href = `/history/${r.id}`;

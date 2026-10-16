@@ -238,7 +238,9 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
         await new Promise((r) => setTimeout(r, 100));
       }
     };
-    const fileId = (await uploadFile({ name: 'Porada.m4a', startedAt: String(recordedAt) })).id;
+    // Uploaded as a part that starts 90 s into a longer recording: line times are the recording's.
+    const offset = 90;
+    const fileId = (await uploadFile({ name: 'Porada.m4a', startedAt: String(recordedAt), offset: String(offset) })).id;
     const file = await untilDone(fileId);
     const fileGot = file.lines.map((l) => `${l.start.toFixed(1)} <${names[l.speaker.voiceId] || l.speaker.name}> ${l.text}`).join('\n');
     assert.deepStrictEqual(file.lines.map((l) => names[l.speaker.voiceId]), expected.map((e) => e.voice), fileGot);
@@ -247,8 +249,10 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     assert.strictEqual(file.transcript.processing, null);
     assert.strictEqual(file.transcript.title, 'Porada');
     assert.strictEqual(file.transcript.startedAt, recordedAt);
-    assert.ok(Math.abs(file.transcript.duration - (recording.length - 44) / 32000) < 0.01, 'duration is the length of the recording');
+    assert.ok(Math.abs(file.transcript.duration - offset - (recording.length - 44) / 32000) < 0.01, 'the transcript ends where the part ends');
+    assert.ok(file.lines.every((l, i) => Math.abs(l.start - offset - expected[i].start) < 0.5), 'line times count from the start of the recording');
     assert.ok(Math.abs(file.lines[1].spokenAt - (recordedAt + file.lines[1].start * 1000)) < 2, 'line times follow the recording');
+    assert.strictEqual((await fetch(`${base}/api/transcripts/upload?offset=-5`, { method: 'POST', headers: { cookie, 'content-type': 'audio/wav' }, body: recording })).status, 400);
     assert.deepStrictEqual(await learnedOf('jirka'), learnedBefore, 'uploaded recordings do not teach the voices');
     assert.deepStrictEqual(fs.readdirSync(path.join(dataDir, 'uploads')), [], 'the uploaded file is removed');
 
