@@ -119,6 +119,18 @@ test('search counts and shows the matching lines of each transcript on the page'
   db.close();
 });
 
+test('lines are moved to other speakers only if no one moved them meanwhile', () => {
+  const { db, store, jirka, klara } = setup();
+  const t = store.create(1);
+  const [a, b] = addLines(store, t.id, jirka).slice(1, 3); // both 'Speaker 1' (u:1:u1)
+  store.setSpeaker(t.id, { lineIds: [b] }, { voiceId: klara }); // a user moved one of them
+  const to = { voiceId: jirka, key: `v:${jirka}`, label: 'Jirka' };
+  assert.strictEqual(store.moveLines(t.id, [{ lineId: a, from: 'u:1:u1', to }, { lineId: b, from: 'u:1:u1', to }]), 1);
+  const speakerOf = (id) => store.lines(t.id).find((l) => l.id === id).speaker;
+  assert.deepStrictEqual([speakerOf(a).voiceId, speakerOf(b).voiceId], [jirka, klara]);
+  db.close();
+});
+
 test('editing, moving and deleting lines keeps search up to date', () => {
   const { db, voices, store, jirka, klara } = setup();
   const t = store.create(1);

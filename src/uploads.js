@@ -8,6 +8,7 @@ const { pipeline } = require('stream/promises');
 const { HttpError } = require('./errors');
 const { int16ToFloat } = require('./audio');
 const { TranscriptionSession } = require('./transcriber');
+const { regroupSpeakers } = require('./regroup');
 const { SAMPLE_RATE } = require('./speech/engine');
 
 const BYTES_PER_SECOND = SAMPLE_RATE * 2; // 16 kHz mono 16-bit
@@ -84,7 +85,8 @@ function titleFromName(name) {
  * upload is streamed to a temporary file and fed through the same TranscriptionSession as live
  * audio, with speaker recognition and unknown speakers alike. It recognizes at background priority
  * and waits after every few seconds of audio until they are transcribed, so live listening never
- * waits behind a long file. Uploaded files never teach the voices (their sound differs from the
+ * waits behind a long file. Once the file is done, its speakers are decided again per speaker,
+ * from all their lines together (src/regroup.js). Uploaded files never teach the voices (their sound differs from the
  * room's microphone); moving lines to a voice in History does, as for live transcripts.
  *
  * Each transcript's progress is in TranscriptStore.processing (shown by the History pages):
@@ -136,7 +138,9 @@ class UploadQueue {
       const done = new Promise((resolve) => {
         resolveDone = resolve;
       });
-      this.waiting.push({ id: transcript.id, file, dataStart, dataBytes, startedAt: start, offset, status, cancelled: false, done, resolveDone });
+      this.waiting.push({
+        id: transcript.id, file, dataStart, dataBytes, startedAt: start, offset, status, cancelled: false, done, resolveDone, lines: [],
+      });
       this.transcripts.processing.set(transcript.id, status);
       this.transcripts.setRecording(transcript.id, true);
       this.pump();
@@ -221,6 +225,7 @@ class UploadQueue {
       }
       if (!job.cancelled && !failure) await session.finish();
       if (failure) throw failure;
+      this.regroup(job); // also when stopped: the lines that are there
       this.transcripts.extendDuration(job.id, job.offset + job.status.done);
     } finally {
       session.close();
@@ -231,21 +236,42 @@ class UploadQueue {
   save(job, session, m) {
     if (job.cancelled) return;
     const recent = session.recent.get(m.id) || {};
+    const speaker = this.transcripts.speakerFields(m.speaker, 1);
     try {
-      this.transcripts.appendLine(job.id, {
+      const lineId = this.transcripts.appendLine(job.id, {
         start: m.start + job.offset,
         end: m.end + job.offset,
         spokenAt: job.startedAt + Math.round((m.start + job.offset) * 1000),
-        speaker: this.transcripts.speakerFields(m.speaker, 1),
+        speaker,
         text: m.text,
         seconds: recent.seconds,
         embedding: recent.embedding,
         model: this.engine.speakerModelName,
       });
+      job.lines.push({ lineId, key: speaker.key, speaker: m.speaker, embedding: recent.embedding, seconds: recent.seconds });
     } catch (err) {
       // Most likely the transcript was deleted meanwhile: there is nothing left to fill.
       console.warn(`Transcript ${job.id}: ${err.message}; stopping its file transcription.`);
       job.cancelled = true;
+    }
+  }
+
+  /**
+   * Decides the speakers again per speaker, now that the recording is whole (src/regroup.js). A line
+   * that a user moved to another speaker meanwhile stays where it is.
+   */
+  regroup(job) {
+    if (!job.lines.length) return;
+    try {
+      const after = regroupSpeakers(job.lines, this.voices);
+      const changes = [];
+      job.lines.forEach((l, i) => {
+        const to = this.transcripts.speakerFields(after[i], 1);
+        if (to.key !== l.key) changes.push({ lineId: l.lineId, from: l.key, to });
+      });
+      if (changes.length) this.transcripts.moveLines(job.id, changes);
+    } catch (err) {
+      console.warn(`Transcript ${job.id}: deciding its speakers per recording failed: ${err.message}`);
     }
   }
 }

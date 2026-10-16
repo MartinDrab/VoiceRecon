@@ -168,6 +168,31 @@ class TranscriptStore {
   }
 
   /**
+   * Moves lines to other speakers, each only if it still has the speaker it had (a user may have
+   * moved it meanwhile). Returns how many lines moved.
+   * @param {number} transcriptId
+   * @param {{ lineId: number, from: string, to: { voiceId: number | null, key: string, label: string } }[]} changes
+   *   from: the speaker key the line had; to: as speakerFields() gives it
+   */
+  moveLines(transcriptId, changes) {
+    const update = this.db.prepare(`UPDATE transcript_lines SET voice_id = ?, speaker_key = ?, speaker_label = ?
+      WHERE transcript_id = ? AND id = ? AND speaker_key = ?`);
+    let moved = 0;
+    this.db.exec('BEGIN');
+    try {
+      for (const c of changes) {
+        moved += Number(update.run(c.to.voiceId, c.to.key, String(c.to.label).slice(0, MAX_LABEL), transcriptId, c.lineId, c.from).changes);
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+    if (moved) this.touch(transcriptId);
+    return moved;
+  }
+
+  /**
    * After a user moved lines to a voice: teach the voice how they sounded (one correction made
    * from the average of the lines, so a long transcript does not flood the voice's memory).
    */
