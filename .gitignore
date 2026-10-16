@@ -4,3 +4,5 @@ data/
 *.log
 .env
 test/fixtures/
+test-results/
+playwright-report/

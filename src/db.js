@@ -127,7 +127,9 @@ const MIGRATIONS = [
 function openDatabase(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
   const db = new DatabaseSync(path.join(dataDir, 'voicerecon.db'));
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+  // busy_timeout: another connection may be writing (npm run create-user, backup, the browser
+  // tests' seeding while the server runs); wait for it instead of failing with SQLITE_BUSY.
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 
   const version = Number(db.prepare('PRAGMA user_version').get().user_version);
   for (let v = version; v < MIGRATIONS.length; v++) {

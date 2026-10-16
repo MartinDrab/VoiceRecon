@@ -14,9 +14,10 @@
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
+    "test:browser": "playwright test",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json && tsc -p public/tsconfig.json",
-    "check": "npm run lint && npm run typecheck && npm test"
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:browser"
   },
   "engines": {
     "node": ">=22.13"
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@types/express": "^5.0.6",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",

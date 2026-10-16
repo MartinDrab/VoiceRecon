@@ -28,7 +28,8 @@ npm test                             # unit + end-to-end tests (node:test), one 
                                      # and evaluation tests both need the CPU, and interim results need it idle
 npm run lint                         # ESLint (eslint.config.js)
 npm run typecheck                    # TypeScript checkJs: tsconfig.json (server) + public/tsconfig.json (pages)
-npm run check                        # lint + typecheck + test, as CI runs it
+npm run test:browser                 # browser tests (Playwright, test/browser/); once: npx playwright install chromium --only-shell
+npm run check                        # lint + typecheck + test + test:browser, as CI runs it
 npm run evaluate -- test/fixtures    # accuracy report: WER and speaker accuracy (see README)
 npm run evaluate -- <dir> --learn 0,1 --change-similarity 0.3,0.5,0.6 --split-middle 0,1   # compare settings
 npm start                            # http://127.0.0.1:3000
@@ -38,6 +39,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 
 - Node 22.13 or newer is required for `node:sqlite`; development used Node 24 on Windows 11.
 - `test/e2e.test.js` starts the real server with a temporary `DATA_DIR`, enrolls two voices, streams `test/fixtures/conversation.wav` over the WebSocket and checks speakers, timing and word recall. It **skips** when models or fixtures are missing, so make sure it ran (look for its ✔ line), not just that the suite passed.
+- `npm run test:browser` (`playwright.config.js`, `test/browser/`): `global-setup.js` makes a temporary `DATA_DIR` with an `admin` (random password) and the voice Anna (`seed.js`), starts the real server on a free port, signs in, and passes the address, the cookie file and the folder to the tests in `VOICERECON_TEST_*` variables; it stops the server and deletes the folder afterwards. One worker and one server for all files. Each test seeds what it changes: `seedTranscript()` writes a transcript with lines and Opus audio of a tone straight into the running server's database (no models needed), and voices a test creates are deleted after it, so tests are independent and can be repeated (`--repeat-each`) or retried. Tests that need the models call `needsSpeech()` (`fixtures.js`) and skip without them, unless `VOICERECON_REQUIRE_MODELS=1`. Chromium's fake microphone plays `test/fixtures/conversation.wav` once (`--use-file-for-fake-audio-capture`), so live listening is tested end to end in the page. The browser runs with `locale: 'en-US'`, so assertions use the English texts.
 - `npm run backup -- [file]` / `npm run restore -- <file>` (`src/backup.js`): the data folder as one tar (`backup.json`, a `VACUUM INTO` copy of the database without `sessions`, `recordings/`, `audio/`); the admin download is `GET /api/backup`. A restore extracts to a new folder, checks its database opens, then swaps it in and keeps the old one as `<DATA_DIR>.before-restore-<time>`; it refuses while the server answers and refuses any other file names (no `..`).
 - `npm run export-test -- <transcript id> <folder>` turns a transcript corrected in History (with kept audio) into such a folder: `conversation.wav`, `reference.txt`, `voices/`.
 - `npm run evaluate -- <folder>` runs the real `TranscriptionSession` offline on a recording and scores it against a hand-written `reference.txt` (no timestamps needed; words are aligned). `--threshold`, `--min-silence` and `--change-similarity` take comma-separated lists for parameter sweeps. `test/fixtures` is a ready-made (synthetic) dataset; real ones are made with the transcript page's *Keep audio for download* + *Download recording*.
@@ -157,6 +159,8 @@ Uploaded files take the same path from step 2 on. *Transcribe a file* (`transcri
 
 ## Testing the browser UI without a microphone
 
+`npm run test:browser` covers the pages automatically (see Commands); add a test in `test/browser/` for new behavior there. To look at a page by hand, e.g. in an agent's browser pane, where Chromium's fake-microphone flags are not available:
+
 1. Start a dev server with a temporary `DATA_DIR`.
 2. Create the admin through `POST /api/setup` from localhost.
 3. Upload a WAV as a voice sample so the page can fetch it, then delete that voice.
@@ -191,6 +195,6 @@ names, which matches what real recordings showed (people who were not enrolled s
 
 ## Before you finish a change
 
-- Run `npm run check` (lint, type checks, tests) and confirm the end-to-end test actually ran. With `VOICERECON_REQUIRE_MODELS=1` the speech tests fail instead of skipping when models are missing (the nightly CI uses this).
+- Run `npm run check` (lint, type checks, tests, browser tests) and confirm the end-to-end test and the speech browser tests actually ran (not `-` skipped). With `VOICERECON_REQUIRE_MODELS=1` the speech tests fail instead of skipping when models are missing (the nightly CI uses this).
 - For transcriber or speech changes, run `npm run evaluate -- test/fixtures` before and after (and on any real dataset available) and compare WER and speaker accuracy. On the fixtures, speaker accuracy must stay 100%; WER was 14.9% when the tool was introduced.
 - Update README.md when behavior, configuration or commands change.

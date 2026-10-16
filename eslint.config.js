@@ -4,7 +4,7 @@ const js = require('@eslint/js');
 const globals = require('globals');
 
 module.exports = [
-  { ignores: ['node_modules/', 'models/', 'data/', 'test/fixtures/'] },
+  { ignores: ['node_modules/', 'models/', 'data/', 'test/fixtures/', 'test-results/', 'playwright-report/'] },
   js.configs.recommended,
   {
     // Server, scripts and tests: CommonJS on Node.js.

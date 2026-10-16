@@ -15,5 +15,5 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.js", "src/**/*.d.ts", "scripts/**/*.js", "test/**/*.js", "eslint.config.js"]
+  "include": ["src/**/*.js", "src/**/*.d.ts", "scripts/**/*.js", "test/**/*.js", "eslint.config.js", "playwright.config.js"]
 }

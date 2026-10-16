@@ -365,10 +365,10 @@ npm run check
 ```
 
 This runs ESLint (`npm run lint`), type checking of the JavaScript with TypeScript in `checkJs`
-mode (`npm run typecheck`; nothing is compiled) and all tests (`npm test`). The tests include unit
-tests and an end-to-end test. The end-to-end test starts the server, enrolls two
-voices, streams a recorded Czech conversation over the WebSocket and checks who said what. It needs
-synthetic test audio, made with two Czech text-to-speech voices:
+mode (`npm run typecheck`; nothing is compiled), all tests (`npm test`) and the browser tests
+(`npm run test:browser`). The tests include unit tests and an end-to-end test. The end-to-end test
+starts the server, enrolls two voices, streams a recorded Czech conversation over the WebSocket and
+checks who said what. It needs synthetic test audio, made with two Czech text-to-speech voices:
 
 ```bash
 npm run models -- --test
@@ -377,6 +377,22 @@ npm run models -- --test
 ```bash
 node scripts/make-test-audio.js
 ```
+
+The browser tests (`test/browser/`, [Playwright](https://playwright.dev)) open the pages in
+Chromium against the real server, started with a temporary data folder; each test adds the
+transcripts it needs (with audio) straight into its database. They cover History (search, playing from a line as the highlight
+follows the text, merging and moving speakers, fixing and deleting lines, exports), the *Transcribe
+a file* dialog (length, choosing a part, refusing a wrong one, uploading only that part), the Voices
+page and, with the speech models and test audio, live listening through a fake microphone that plays
+the test conversation, transcribing an uploaded part, and voice recordings with their warnings and
+*Test recognition*. They need Playwright's browser once (about 280 MB):
+
+```bash
+npx playwright install chromium --only-shell
+```
+
+`PLAYWRIGHT_CHANNEL=msedge` (or `chrome`) uses an installed Edge or Chrome instead. A failed test
+leaves a screenshot and a trace in `test-results/` (`npx playwright show-trace <trace.zip>`).
 
 GitHub Actions runs the same checks on every push and pull request (`.github/workflows/ci.yml`:
 Ubuntu with Node 22 and 24, Windows with Node 24). The speech tests need the models, so there they
@@ -392,7 +408,8 @@ src/          server: config, database, auth, audio I/O, speech engine, voice ma
 public/       pages (login, transcript, history, voices, users) and their scripts/styles
 scripts/      launcher (behind start.cmd / start.sh), model download, test-audio generator,
               create-user CLI, accuracy evaluation
-test/         unit and end-to-end tests; test/fixtures (generated) is also an evaluation dataset
+test/         unit and end-to-end tests; test/browser: browser tests (Playwright);
+              test/fixtures (generated) is also an evaluation dataset
 ```
 
 ## Known limitations
