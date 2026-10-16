@@ -39,6 +39,7 @@ Options:
   --threshold <list>           speaker match thresholds to try, e.g. 0.3,0.4,0.5
   --min-silence <list>         seconds of silence that end an utterance, e.g. 0.25,0.35,0.5
   --change-similarity <list>   similarity below which an utterance is split between speakers
+  --split-middle <list>        cut out a stretch of someone else in the middle (A–B–A): 0 = off, 1 = on
   --learn <list>               learn from clearly recognized lines during the run: 0 = off, 1 = on
   --details <file>             write word-by-word differences of the best run
   --json <file>                write all results as JSON`;
@@ -64,6 +65,7 @@ function parseArgs(argv) {
     else if (a === '--threshold') opts.lists.threshold = list(value(), a);
     else if (a === '--min-silence') opts.lists.minSilence = list(value(), a);
     else if (a === '--change-similarity') opts.lists.changeSimilarity = list(value(), a);
+    else if (a === '--split-middle') opts.lists.splitMiddle = list(value(), a);
     else if (a === '--learn') opts.lists.learn = list(value(), a);
     else if (a === '--details') opts.details = value();
     else if (a === '--json') opts.json = value();
@@ -155,6 +157,7 @@ async function runOnce(engine, voices, audio, params) {
     interim: false,
     vad: { minSilence: params.minSilence },
     changeMaxSimilarity: params.changeSimilarity,
+    splitMiddle: Boolean(params.splitMiddle),
   });
   const names = new Map(voices.summary().map((v) => [v.id, v.name]));
   const lines = [];
@@ -267,18 +270,20 @@ async function main() {
       threshold: app ? app.threshold : config.speakerThreshold,
       minSilence: 0.35,
       changeSimilarity: CHANGE_MAX_SIMILARITY,
+      splitMiddle: 1,
       learn: app && app.learnFromSpeech ? 1 : 0,
     };
     const combos = product(opts.lists).map((c) => ({ ...defaults, ...c }));
     const runs = [];
-    console.log('\n  threshold  min-silence  change-sim  learn |    WER  WER (no accents) | speaker ok (name)  speaker ok (mapped)'
+    console.log('\n  threshold  min-silence  change-sim  middle  learn |    WER  WER (no accents) | speaker ok (name)  speaker ok (mapped)'
       + '  avg score | lines  unknown   time');
     for (const params of combos) {
       const out = await runOnce(engine, voices, audio, params);
       const result = score(refTurns, out.lines);
       runs.push({ params, result, out });
       console.log(`  ${lpad(params.threshold.toFixed(2), 9)}  ${lpad(params.minSilence.toFixed(2), 11)}`
-        + `  ${lpad(params.changeSimilarity.toFixed(2), 10)}  ${lpad(params.learn ? 'on' : 'off', 5)} |`
+        + `  ${lpad(params.changeSimilarity.toFixed(2), 10)}  ${lpad(params.splitMiddle ? 'on' : 'off', 6)}`
+        + `  ${lpad(params.learn ? 'on' : 'off', 5)} |`
         + ` ${lpad(pct(result.wer), 6)}  ${lpad(pct(result.werNoAccents), 16)} |`
         + ` ${lpad(pct(result.speakerAccuracyByName), 17)}  ${lpad(pct(result.speakerAccuracyMapped), 19)}`
         + `  ${lpad(out.meanScore === null ? '–' : out.meanScore.toFixed(2), 9)} |`
@@ -291,7 +296,7 @@ async function main() {
     if (runs.length > 1) {
       const p = best.params;
       console.log(`\nBest: threshold ${p.threshold}, min-silence ${p.minSilence}, change-similarity ${p.changeSimilarity}, `
-        + `learning ${p.learn ? 'on' : 'off'}`);
+        + `middle split ${p.splitMiddle ? 'on' : 'off'}, learning ${p.learn ? 'on' : 'off'}`);
     }
     printBreakdown(best.result);
     console.log(`\n  ${best.result.refTurns} reference turns, ${best.result.hypTurns} transcript lines;`

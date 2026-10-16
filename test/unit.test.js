@@ -341,6 +341,35 @@ test('enrolled voices taking turns are cut where one clearly takes over from ano
   assert.deepStrictEqual(session.voiceChanges([w(null), w(null)]), []);
 });
 
+test('a stretch of another voice inside one speaker\'s speech (A–B–A) is cut out with two cuts', async () => {
+  // Each sample says who speaks (1 = A, 2 = B); a window's "voice print" points between A and B as
+  // much as each of them speaks in it. Only B has a saved voice, so voiceChanges() finds no change.
+  const sr = 16000;
+  const audio = (...turns) => Float32Array.from(turns.flatMap(([who, secs]) => new Array(secs * sr).fill(who)));
+  const engine = {
+    createVad: () => ({}),
+    embed: (samples) => {
+      const b = samples.filter((x) => x === 2).length / samples.length;
+      return l2normalize(Float32Array.from([1 - b, b]));
+    },
+  };
+  const voices = {
+    identify: (e) => ({ voiceId: e[1] >= 0.6 ? 'B' : null, score: e[1], scores: [{ voiceId: 'B', score: e[1] }] }),
+  };
+  const cuts = async (core, opts) => (await new TranscriptionSession(engine, voices, opts).speakerTurns(core))
+    .slice(1).map((t) => t.start / sr);
+  // Within a window hop: windows with both voices in them go to the rest, not to the middle stretch.
+  const near = (got, want) => got.length === want.length && got.every((x, i) => Math.abs(x - want[i]) <= 0.5);
+  const aba = audio([1, 6], [2, 5], [1, 6]);
+  assert.ok(near(await cuts(aba), [6, 11]), 'B between two stretches of A');
+  assert.ok(near(await cuts(audio([2, 6], [1, 5], [2, 6])), [6, 11]), 'A between two stretches of B');
+  // Any single cut leaves A in both halves, which then sound alike (0.77 at best): one cut at a time
+  // splits nothing.
+  assert.deepStrictEqual(await cuts(aba, { splitMiddle: false }), []);
+  assert.ok(near(await cuts(audio([1, 6], [2, 6])), [6]), 'one change still gets one cut');
+  assert.deepStrictEqual(await cuts(audio([1, 17])), [], 'one speaker is not cut');
+});
+
 test('a recording is decoded, measured, voice-printed and re-encoded in one step (the job of the worker)', () => {
   const calls = [];
   const engine = {

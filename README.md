@@ -161,7 +161,7 @@ path is longer than 260 characters.
 1. The browser streams 16 kHz mono audio over a WebSocket (`/ws/transcribe`) in 100 ms frames.
 2. Silero VAD finds speech. An utterance ends after 0.35 s of silence; after 15 s of continuous speech it is cut at the next short dip.
 3. While someone talks, the unfinished utterance is re-transcribed about every 0.8 s whenever the CPU is free. These interim results are shown greyed out.
-4. A finished utterance is transcribed with a little padding around it. One shorter than 2.5 s is transcribed after the last 4 s of speech that came before it, and only its own words are kept: alone, the recognizer often took a short Czech phrase for English ("Ukrajincům" came out as "Uh Ukraine Soom"). Sliding 1.5 s voice prints check whether the speaker changes inside it: first where one saved voice clearly takes over from another, then where two parts simply sound different (for people without a saved voice). Each part is matched against the saved voices. If no voice reaches the threshold, the part goes to the closest unknown speaker of this session, or starts a new one. A long stretch of one speaker is split into lines at sentence ends (each line at least 3 s long).
+4. A finished utterance is transcribed with a little padding around it. One shorter than 2.5 s is transcribed after the last 4 s of speech that came before it, and only its own words are kept: alone, the recognizer often took a short Czech phrase for English ("Ukrajincům" came out as "Uh Ukraine Soom"). Sliding 1.5 s voice prints check whether the speaker changes inside it: first where one saved voice clearly takes over from another, then where two parts simply sound different (for people without a saved voice). When one person speaks before and after someone else, that stretch in the middle is cut out with two cuts, because no single cut separates them. Each part is matched against the saved voices. If no voice reaches the threshold, the part goes to the closest unknown speaker of this session, or starts a new one. A long stretch of one speaker is split into lines at sentence ends (each line at least 3 s long).
 5. Final lines replace the interim text in the browser. Changes made on the Voices page (names, colors) show up in open transcripts immediately.
 
 An uploaded recording goes through the same steps, without interim results and at a lower priority than live listening.
@@ -215,9 +215,11 @@ On a test conversation put together from the recordings of four real voices, bot
 everyone apart when there was a pause of half a second between turns, with each person in turn
 not enrolled. With shorter pauses, turns run together into one utterance; there CAM++ gave 23 and
 35 % of two people's words to someone else when they were not enrolled, and ResNet34-LM gave
-none, while for the other two people both models made the same mistake (see
-[Known limitations](#known-limitations)). Your own meetings are the real test: measure them with
-`npm run evaluate` (below).
+none. For the other two people both models gave 12 and 55 % of their words to someone else: one
+of them spoke between two stretches of the other, and the split into speakers made only one cut at
+a time. It now also cuts out such a middle stretch, which brought those two down to 0 and 2 % (one
+word), with no change for the enrolled people. Your own meetings are the real test: measure them
+with `npm run evaluate` (below).
 
 ## Measuring accuracy on your own recordings
 
@@ -282,6 +284,7 @@ npm run evaluate -- my-meeting --app-voices --threshold 0.5,0.55,0.6,0.65 --min-
 | `--threshold` | match threshold for saved voices (set the winner on the Voices page) |
 | `--min-silence` | seconds of silence that end an utterance (`minSilence` in `src/speech/engine.js`) |
 | `--change-similarity` | how different two parts of one utterance must sound to be split between speakers (`CHANGE_MAX_SIMILARITY` in `src/transcriber.js`). In an echoey room people sound more alike; try 0.3,0.5,0.6 |
+| `--split-middle` | `0,1` compares the split into speakers without and with cutting out a middle stretch (one person speaking before and after someone else without a pause) |
 | `--learn` | `0,1` compares learning from live speech off and on (each run starts without learned lines) |
 | `--words <file>` | names and terms the recognizer should prefer, one per line (as *Names and terms* on the Voices page; the voices' names are always included). `--no-words` turns even those off, for comparison |
 | `--details <file>` | word-by-word differences of the best run, plus VoiceRecon's transcript |
@@ -331,7 +334,7 @@ test/         unit and end-to-end tests; test/fixtures (generated) is also an ev
 ## Known limitations
 
 - Very short utterances (under about one second, e.g. "ano", "jo") are too short to recognize the voice reliably. They are attributed to the previous speaker. When people answer each other without a pause, a turn shorter than about 1.5 s stays in the neighbouring line.
-- When a person without a saved voice and a saved voice take turns without pausing (less than about a third of a second), and the person without a voice speaks both before and after, the whole stretch can be credited to the saved voice: the split into speakers looks for one person taking over from another, and there both halves contain the same unknown voice.
+- When people take turns without pausing (less than about a third of a second), the change is found from 1.5 s voice prints, so the cut can be up to half a second off and a word next to it can go to the other person.
 - A word list helps only words that sound close to what is listed: "Andrew Sharp" said the Czech way still came out as "Andru Šárp".
 - People talking over each other at the same time are not separated; the louder voice usually wins.
 - Accuracy depends on the microphone. A single microphone in the middle of the table works, but a distant laptop microphone in an echoing room makes both transcription and voice matching worse.

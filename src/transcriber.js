@@ -29,6 +29,10 @@ const CHANGE_MIN = sec(3.0);
 const CHANGE_WIN = sec(1.5);
 const CHANGE_HOP = sec(0.5);
 const CHANGE_MIN_SIDE = 2; // windows on each side of a split
+// A–B–A without a pause needs two cuts at once: any one cut leaves A in both halves, which then still
+// sound alike. The stretch cut out needs this many windows (1.5 s between the cuts): with 2, a second
+// of one person's own speech was cut out of a 20 s stretch.
+const CHANGE_MIN_MIDDLE = 3;
 // Halves of one utterance that are less similar than this are split between speakers. Measured on
 // real voices answering without a pause: 0.3 left most changes unsplit, 0.5 found them (95% of speech
 // time credited correctly instead of 86%) without splitting anyone's own speech.
@@ -68,9 +72,11 @@ class TranscriptionSession extends EventEmitter {
    *   background           recognize at low priority, behind live sessions (uploaded files)
    *   vad                  overrides for SpeechEngine.createVad(), e.g. { minSilence: 0.3 }
    *   changeMaxSimilarity  split an utterance when its halves are less similar than this
+   *   splitMiddle          also cut out a middle stretch that sounds unlike the rest (A–B–A; default true)
    */
   constructor(engine, voices, {
     interim = true, learn = true, background = false, vad = {}, changeMaxSimilarity = CHANGE_MAX_SIMILARITY,
+    splitMiddle = true,
   } = {}) {
     super();
     this.engine = engine;
@@ -79,6 +85,7 @@ class TranscriptionSession extends EventEmitter {
     this.learn = learn;
     this.background = background;
     this.changeMaxSimilarity = changeMaxSimilarity;
+    this.splitMiddle = splitMiddle;
     this.vad = engine.createVad(vad);
     this.leftover = new Float32Array(0);
     this.history = [];
@@ -311,8 +318,9 @@ class TranscriptionSession extends EventEmitter {
 
   /**
    * Splits an utterance where the voice changes (binary segmentation over sliding-window speaker
-   * embeddings). Returns [{ start, end }] in samples relative to the utterance. Each embedding
-   * takes ~25 ms of CPU, so the event loop is given a turn between them to keep audio flowing.
+   * embeddings, with two cuts at once where one speaker talks before and after another). Returns
+   * [{ start, end }] in samples relative to the utterance. Each embedding takes ~25 ms of CPU, so
+   * the event loop is given a turn between them to keep audio flowing.
    */
   async speakerTurns(core) {
     const whole = [{ start: 0, end: core.length }];
@@ -325,28 +333,42 @@ class TranscriptionSession extends EventEmitter {
       if (!e) return whole;
       embs.push(e);
     }
-    const mean = (a, b) => {
-      const acc = new Float32Array(embs[0].length);
-      for (let i = a; i < b; i++) for (let j = 0; j < acc.length; j++) acc[j] += embs[i][j];
-      return l2normalize(acc);
-    };
+    // Voice print of the windows [a, b), or of [a, b) and [c, d) together, from running sums.
+    const sums = [new Float64Array(embs[0].length)];
+    for (const e of embs) sums.push(sums[sums.length - 1].map((x, j) => x + e[j]));
+    const mean = (a, b, c = 0, d = 0) => l2normalize(sums[b].map((x, j) => x - sums[a][j]
+      + sums[d][j] - sums[c][j]));
     const cuts = [];
-    // Within a part (windows lo..hi), cut where its halves sound least alike, if unlike enough.
+    // Within a part (windows lo..hi), cut where its halves sound least alike, if unlike enough. If no
+    // single cut is, cut out the middle stretch that sounds least like the rest around it (A–B–A).
     const split = (lo, hi, depth) => {
       if (depth > 3 || hi - lo < 2 * CHANGE_MIN_SIDE) return;
-      let best = -1;
+      let best = [];
       let bestSim = this.changeMaxSimilarity;
       for (let k = lo + CHANGE_MIN_SIDE; k <= hi - CHANGE_MIN_SIDE; k++) {
         const sim = cosine(mean(lo, k), mean(k, hi));
         if (sim < bestSim) {
           bestSim = sim;
-          best = k;
+          best = [k];
         }
       }
-      if (best < 0) return;
-      split(lo, best, depth + 1);
-      cuts.push(best);
-      split(best, hi, depth + 1);
+      if (!best.length && this.splitMiddle) {
+        for (let i = lo + CHANGE_MIN_SIDE; i + CHANGE_MIN_MIDDLE + CHANGE_MIN_SIDE <= hi; i++) {
+          for (let j = i + CHANGE_MIN_MIDDLE; j + CHANGE_MIN_SIDE <= hi; j++) {
+            const sim = cosine(mean(i, j), mean(lo, i, j, hi));
+            if (sim < bestSim) {
+              bestSim = sim;
+              best = [i, j];
+            }
+          }
+        }
+      }
+      if (!best.length) return;
+      const edges = [lo, ...best, hi];
+      for (let p = 0; p + 1 < edges.length; p++) {
+        if (p > 0) cuts.push(edges[p]);
+        split(edges[p], edges[p + 1], depth + 1);
+      }
     };
     // Enrolled voices taking turns are found first: people who sound alike may still be told apart
     // by their recordings. Within each part, the halves' similarity finds everyone else.
