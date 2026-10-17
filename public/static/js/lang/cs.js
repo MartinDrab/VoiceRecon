@@ -370,6 +370,20 @@ export default {
   'Waiting to be restored when VoiceRecon starts next: the backup of {date} ({holds}). Restart VoiceRecon to restore it.':
     'Čeká na obnovení při příštím spuštění VoiceRecon: záloha z {date} ({holds}). Obnovíte ji restartem VoiceRecon.',
   'Cancel the restore': 'Zrušit obnovení',
+  'Restart now': 'Restartovat teď',
+  'Restart VoiceRecon now and restore the backup? Everyone signs in again afterwards.':
+    'Restartovat VoiceRecon teď a obnovit zálohu? Potom se všichni znovu přihlásí.',
+  '{n} person is listening now: listening stops, and what was said so far stays saved.|{n} people are listening now: listening stops, and what was said so far stays saved.': {
+    one: '{n} člověk teď poslouchá: poslech se zastaví a to, co se dosud řeklo, zůstane uložené.',
+    few: '{n} lidé teď poslouchají: poslech se zastaví a to, co se dosud řeklo, zůstane uložené.',
+    other: '{n} lidí teď poslouchá: poslech se zastaví a to, co se dosud řeklo, zůstane uložené.',
+  },
+  '{n} recording is being transcribed: it stops, and the lines done so far stay.|{n} recordings are being transcribed: they stop, and the lines done so far stay.': {
+    one: '{n} nahrávka se právě přepisuje: přepis se zastaví a hotové řádky zůstanou.',
+    few: '{n} nahrávky se právě přepisují: přepis se zastaví a hotové řádky zůstanou.',
+    other: '{n} nahrávek se právě přepisuje: přepis se zastaví a hotové řádky zůstanou.',
+  },
+  'Restarting VoiceRecon… This page reloads once it is back.': 'VoiceRecon se restartuje… Stránka se načte znovu, až bude zpět.',
   'The restore is cancelled.': 'Obnovení je zrušeno.',
   'The backup of {date} was restored when VoiceRecon started.': 'Záloha z {date} byla obnovena při spuštění VoiceRecon.',
   'The previous data are in {folder}; delete that folder once everything works.': 'Předchozí data jsou ve složce {folder}; až vše funguje, smažte ji.',

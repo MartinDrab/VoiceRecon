@@ -5,7 +5,8 @@
  *   node scripts/launch.js [--no-browser]
  * On first use it installs the dependencies and downloads the speech models. Then it starts the
  * server, opens the app in the browser once the server is listening, and stops with the server
- * (Ctrl+C). If VoiceRecon is already running, it only opens the browser.
+ * (Ctrl+C). When the server exits to be restarted (the Users page, src/restart.js), it starts it
+ * again. If VoiceRecon is already running, it only opens the browser.
  * Settings come from the environment or from a .env file in the project folder (see README.md).
  */
 
@@ -119,23 +120,42 @@ function openBrowser(url) {
   child.unref();
 }
 
-/** Runs the server until it stops, and opens the browser once it listens. */
+/**
+ * Runs the server until it stops, and opens the browser once it listens. A server that exits with
+ * RESTART_CODE is started again (the browser is not opened again: the pages reconnect by themselves).
+ */
 function runServer(url, browser) {
-  const server = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], { cwd: ROOT, stdio: ['inherit', 'pipe', 'inherit'] });
-  let output = '';
-  server.stdout.on('data', (chunk) => {
-    process.stdout.write(chunk);
-    if (output === null) return;
-    output += chunk;
-    if (!output.includes('VoiceRecon listening on')) return;
-    output = null;
-    console.log(`\nVoiceRecon is running at ${url}  Press Ctrl+C to stop it.\n`);
-    if (browser) openBrowser(url);
-  });
+  const { RESTART_CODE } = require('../src/restart');
+  let server = null;
+  const start = (again) => {
+    server = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
+      cwd: ROOT,
+      stdio: ['inherit', 'pipe', 'inherit'],
+      env: { ...process.env, VOICERECON_SUPERVISED: '1' }, // the Users page may restart it
+    });
+    let output = '';
+    server.stdout.on('data', (chunk) => {
+      process.stdout.write(chunk);
+      if (output === null) return;
+      output += chunk;
+      if (!output.includes('VoiceRecon listening on')) return;
+      output = null;
+      console.log(`\nVoiceRecon is running${again ? ' again' : ''} at ${url}  Press Ctrl+C to stop it.\n`);
+      if (browser && !again) openBrowser(url);
+    });
+    server.on('exit', (code, signal) => {
+      if (code === RESTART_CODE) {
+        console.log('\nRestarting VoiceRecon...\n');
+        start(true);
+      } else {
+        process.exit(code ?? (signal ? 1 : 0));
+      }
+    });
+  };
   // Ctrl+C reaches the server too (same console); wait for it to shut down cleanly.
   process.on('SIGINT', () => {});
   for (const signal of /** @type {const} */ (['SIGTERM', 'SIGHUP'])) process.on(signal, () => server.kill(signal));
-  server.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  start(false);
 }
 
 async function main() {

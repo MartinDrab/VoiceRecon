@@ -137,9 +137,12 @@ restore everyone signs in again. Uploads still waiting to be transcribed are not
 To restore one:
 
 - On the **Users** page, administrators click *Restore a backup…* and pick the file. It is checked
-  and kept until VoiceRecon starts next; restart VoiceRecon then (the page shows the waiting
-  backup and can cancel it). The restore runs before anything opens the data, and the Users page
-  says how it went. A file that turns out damaged is not restored, and the data stay as they were.
+  and kept until VoiceRecon starts next. The page shows the waiting backup, can cancel it, and,
+  when VoiceRecon was started with `start.cmd` or `./start.sh`, restarts it with *Restart now*
+  (it says first whether anyone is listening or a recording is being transcribed: both stop) and
+  reloads once it is back. Started any other way, restart VoiceRecon yourself. The restore runs
+  before anything opens the data, and the Users page says how it went. A file that turns out
+  damaged is not restored, and the data stay as they were.
 - Or stop VoiceRecon and run, in its folder:
 
   ```bash

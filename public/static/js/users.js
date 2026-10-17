@@ -116,6 +116,13 @@ $('audio-form').addEventListener('submit', async (e) => {
 
 const holds = (b) => [plural(b.users, '{n} user', '{n} users'), plural(b.voices, '{n} voice', '{n} voices'),
   plural(b.transcripts, '{n} transcript', '{n} transcripts')].join(', ');
+let canRestart = false; // started by start.cmd / start.sh, which start it again (src/restart.js)
+
+async function loadRestore() {
+  const [state, restart] = await Promise.all([api('/backup/restore'), api('/restart')]);
+  canRestart = restart.available;
+  showRestore(state);
+}
 
 /** The backup waiting to be restored at the next start, and how the last restore went. */
 function showRestore({ pending, result }) {
@@ -132,6 +139,7 @@ function showRestore({ pending, result }) {
     notes.push(h('div.notice.warn.small', {},
       h('span.grow', {}, t('Waiting to be restored when VoiceRecon starts next: the backup of {date} ({holds}). Restart VoiceRecon to restore it.',
         { date: formatDateTime(Date.parse(pending.createdAt)), holds: holds(pending) })),
+      canRestart ? h('button.btn.btn-sm.btn-primary', { type: 'button', onclick: restartNow }, t('Restart now')) : null,
       h('button.btn.btn-sm', { type: 'button', onclick: () => changeRestore('/backup/restore', t('The restore is cancelled.')) }, t('Cancel the restore'))));
   }
   $('restore-status').replaceChildren(...notes);
@@ -141,10 +149,39 @@ async function changeRestore(path, done) {
   try {
     await api(path, { method: 'DELETE' });
     if (done) toast(done);
-    showRestore(await api('/backup/restore'));
+    await loadRestore();
   } catch (err) {
     toast(err.message, { error: true });
   }
+}
+
+/** Restarts VoiceRecon now, so that the waiting backup is restored, and reloads once it is back. */
+async function restartNow() {
+  try {
+    const busy = await api('/restart');
+    const question = [t('Restart VoiceRecon now and restore the backup? Everyone signs in again afterwards.')];
+    if (busy.listening) {
+      question.push(plural(busy.listening, '{n} person is listening now: listening stops, and what was said so far stays saved.',
+        '{n} people are listening now: listening stops, and what was said so far stays saved.'));
+    }
+    if (busy.transcribing) {
+      question.push(plural(busy.transcribing, '{n} recording is being transcribed: it stops, and the lines done so far stay.',
+        '{n} recordings are being transcribed: they stop, and the lines done so far stay.'));
+    }
+    if (!confirm(question.join('\n\n'))) return;
+    await api('/restart', { method: 'POST' });
+  } catch (err) {
+    toast(err.message, { error: true });
+    return;
+  }
+  $('restore').disabled = true;
+  $('restore-status').replaceChildren(h('div.notice.small', {}, h('span.grow', {}, t('Restarting VoiceRecon… This page reloads once it is back.'))));
+  // Until the server has stopped, then until it answers again (a large backup takes a while to restore).
+  const answers = () => fetch('/api/setup', { cache: 'no-store' }).then((r) => r.ok, () => false);
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  for (let i = 0; i < 50 && (await answers()); i++) await sleep(200);
+  while (!(await answers())) await sleep(1000);
+  location.reload();
 }
 
 $('restore').addEventListener('click', () => {
@@ -168,7 +205,7 @@ $('restore-file').addEventListener('change', async () => {
     toast(t('The backup will be restored when VoiceRecon starts next.'));
   } catch (err) {
     toast(err.message, { error: true });
-    showRestore(await api('/backup/restore'));
+    await loadRestore();
   }
   $('restore').disabled = false;
 });
@@ -200,7 +237,7 @@ initPage('users').then(async (user) => {
     $('admin-section').classList.remove('hidden');
     await loadUsers();
     showAudio(await api('/settings/audio'));
-    showRestore(await api('/backup/restore'));
+    await loadRestore();
   } else {
     $('account-section').classList.remove('mt');
   }

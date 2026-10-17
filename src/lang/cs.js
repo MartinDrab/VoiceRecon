@@ -59,6 +59,8 @@ module.exports = {
   'This transcript has no audio.': 'Tento přepis nemá zvuk.',
   'Not an Ogg Opus file.': 'Nejde o soubor Ogg Opus.',
   'Invalid filter.': 'Neplatný filtr.',
+  'VoiceRecon was not started with start.cmd or start.sh, so it cannot restart itself. Restart it the way it was started.':
+    'VoiceRecon nebyl spuštěn přes start.cmd ani start.sh, takže se nemůže sám restartovat. Restartujte ho tak, jak byl spuštěn.',
   'This file is not a VoiceRecon backup, or it is damaged or from a newer version.': 'Tento soubor není záloha VoiceRecon, nebo je poškozený či z novější verze.',
   'Wait until the transcript is finished.': 'Počkejte, až bude přepis hotový.',
   'That speaker is not in this transcript.': 'Tento mluvčí v přepisu není.',

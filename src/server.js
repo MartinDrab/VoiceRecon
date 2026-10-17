@@ -22,6 +22,7 @@ const {
   prepareBackup, applyPendingRestore, pendingRestore, setPendingRestore, cancelPendingRestore, restoreResult, dismissRestoreResult,
 } = require('./backup');
 const { attachWebSocket } = require('./ws');
+const { RESTART_CODE, supervised } = require('./restart');
 
 const PUBLIC = path.join(config.root, 'public');
 const tls = Boolean(config.tlsCert && config.tlsKey);
@@ -230,6 +231,19 @@ api.put('/settings/learn', admin, json, (req, res) => {
 api.put('/settings/vocabulary', admin, json, (req, res) => {
   voices.setVocabulary(req.body.words);
   res.json({ vocabulary: voices.vocabulary });
+});
+// Restarting VoiceRecon (restart.js), e.g. to restore an uploaded backup now: possible only when
+// what started the server starts it again; who would be interrupted.
+api.get('/restart', admin, (_req, res) => {
+  const transcribing = [...transcripts.processing.values()].filter((s) => s.state !== 'failed').length;
+  const listening = [...transcripts.recording.keys()].filter((id) => !transcripts.processing.has(id)).length;
+  res.json({ available: supervised(), listening, transcribing });
+});
+api.post('/restart', admin, (req, res) => {
+  if (!supervised()) throw new HttpError(409, 'VoiceRecon was not started with start.cmd or start.sh, so it cannot restart itself. Restart it the way it was started.');
+  console.log(`Restarting: asked by ${req.user.username} on the Users page.`);
+  res.on('finish', () => setTimeout(() => shutdown(RESTART_CODE), 100));
+  res.json({ restarting: true });
 });
 // A backup uploaded here is restored when VoiceRecon starts next (applyPendingRestore() above).
 api.get('/backup/restore', admin, (_req, res) => {
@@ -441,10 +455,10 @@ engine.load()
   .catch((err) => console.error(`Speech models failed to load: ${err.message}`))
   .finally(() => ws.notifyStatus());
 
-function shutdown() {
+function shutdown(code = 0) {
   server.close();
   db.close();
-  process.exit(0);
+  process.exit(code);
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown());
+process.on('SIGTERM', () => shutdown());
