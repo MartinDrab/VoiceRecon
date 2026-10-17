@@ -200,13 +200,13 @@ An uploaded recording goes through the same steps, without interim results and a
 
 | Enrolled | Per line | Per speaker |
 |---|---|---|
-| 2 of 4 | 89.2 % | 91.4 % |
+| 2 of 4 | 88.8 % | 91.0 % |
 | 2 of 4 (the other two) | 92.7 % | 93.1 % |
-| 3 of 4 | 89.2 % | 96.8 % |
+| 3 of 4 | 89.0 % | 96.9 % |
 | none | 87.4 % | 89.5 % |
-| all 4 | 88.3 % | 89.9 % |
+| all 4 | 87.5 % | 89.1 % |
 
-Merging at 0.6 or 0.7 was never better and on three of them worse (87.4 % instead of 89.5 % with nobody enrolled). These Czech conversations were measured before the recognizer's dropped utterances were caught (see [Czech and English](#czech-and-english)); words it dropped were not counted. Ten English conversations built the same way gave 98.0 % per line and 98.8 % per speaker, and 0.5 was again the best (0.6: 98.7 %).
+Merging at 0.6 or 0.7 was never better and on three of them worse (87.4 % instead of 89.5 % with nobody enrolled). The table was measured again once the recognizer's dropped utterances were caught (see [Czech and English](#czech-and-english)): 3.4 % of these conversations' words had been missing, 2.9 % are now, and the shares moved by at most 0.8 points. Ten English conversations built the same way gave 98.0 % per line and 98.8 % per speaker, and 0.5 was again the best (0.6: 98.7 %).
 
 ### How voices are matched
 
@@ -294,10 +294,11 @@ Two things turned up while measuring:
   it dropped about a fifth of the words (19–22 %): whole utterances of clear speech came back
   empty, or as just "Yeah.". This is a known fault of sherpa-onnx's beam search for this model
   ([k2-fsa/sherpa-onnx#3267](https://github.com/k2-fsa/sherpa-onnx/issues/3267), not fixed in
-  1.13.8). It happened where two different recordings meet within one utterance, and not on FLEURS
-  or on the real microphone recordings checked, but it costs nothing to guard against: a result
-  with too little text for its audio is decoded again in two halves, which brought the word error
-  rate of the test conversations from 22–24 % down to 9–11.5 %. Greedy search (no beam) fails less
+  1.13.8). The Czech test conversations, built the same way from real recordings, lost only
+  0.5 % of their words to it, and FLEURS and real microphone recordings none, but it costs nothing
+  to guard against: a result with too little text for its audio is decoded again in two halves,
+  which brought the word error rate of the English test conversations from 22–24 % down to
+  9–11.5 %. Greedy search (no beam) fails less
   often but still does, is 0.2 points worse on Czech and cannot prefer the names and terms.
 - **Opus's VOIP mode lost words in English.** The kept audio first used it; transcribed again from
   it, English FLEURS had 6.5 % errors instead of 6.0 % (48 kbps: 6.3 %). Opus's AUDIO mode at the

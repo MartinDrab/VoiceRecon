@@ -21,9 +21,9 @@ const EMPTY_RESULT = { text: '', lang: '', tokens: [], timestamps: [], durations
 const BEAM_PATHS = 4;
 // sherpa-onnx's beam search for TDT models (Parakeet) sometimes returns no text, or one short word,
 // for plain speech (k2-fsa/sherpa-onnx#3267, unfixed in 1.13.8); the same audio cut in two decodes
-// fine. In test conversations joined from different recordings it lost 19-22 % of the words (with
-// this retry the WER fell from 22-24 % to 9-11.5 %); on real microphone recordings and FLEURS it
-// did not happen, but a safety net costs nothing then. Speech gives at least 0.7 words per second
+// fine. In English test conversations built from VoxPopuli it lost 19-22 % of the words (with this
+// retry the WER fell from 22-24 % to 9-11.5 %), in Czech ones built from real recordings 0.5 %, on
+// FLEURS and real microphone recordings nothing; a safety net costs nothing then. Speech gives at least 0.7 words per second
 // (FLEURS, silences included), so a result with fewer than 0.5 tokens per second of at least 2 s
 // of audio is decoded again in two halves (and those in two again). Greedy search fails less but
 // not never (it lost 13-16 %), and was 0.2 points worse on Czech FLEURS.
