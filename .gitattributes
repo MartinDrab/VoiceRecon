@@ -1,3 +1,5 @@
 # Windows batch files need CRLF; shell scripts must keep LF even in a Windows checkout.
 *.cmd text eol=crlf
 *.sh text eol=lf
+# Files of the Debian package (scripts/build-deb.js) run on Linux.
+packaging/** text eol=lf

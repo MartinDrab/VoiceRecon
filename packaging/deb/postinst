@@ -1,0 +1,31 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+  # The service's user, which owns its data and models.
+  if ! getent passwd voicerecon >/dev/null; then
+    adduser --system --group --home /var/lib/voicerecon --no-create-home voicerecon >/dev/null
+  fi
+  install -d -o voicerecon -g voicerecon -m 750 /var/lib/voicerecon
+  install -d -o voicerecon -g voicerecon -m 750 /var/lib/voicerecon/data /var/lib/voicerecon/models /var/lib/voicerecon/backups
+
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable voicerecon.service >/dev/null 2>&1 || true
+    systemctl restart voicerecon.service || echo "VoiceRecon did not start: see journalctl -u voicerecon" >&2
+  fi
+
+  if [ -z "$2" ]; then
+    cat <<'EOF'
+
+VoiceRecon is starting. The first time, it downloads the speech models (about 3 GB) into
+/var/lib/voicerecon/models; follow it with:  journalctl -u voicerecon -f
+Then create the first administrator: open http://localhost:3000/ on this computer, or run
+  sudo voicerecon create-user <name> --admin
+Settings (address, port, HTTPS) are in /etc/voicerecon/voicerecon.env.
+
+EOF
+  fi
+fi
+
+exit 0

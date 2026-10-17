@@ -6,3 +6,4 @@ data/
 test/fixtures/
 test-results/
 playwright-report/
+dist/

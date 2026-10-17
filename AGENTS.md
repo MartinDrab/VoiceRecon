@@ -32,6 +32,7 @@ npm run test:browser                 # browser tests (Playwright, test/browser/)
 npm run check                        # lint + typecheck + test + test:browser, as CI runs it
 npm run evaluate -- test/fixtures    # accuracy report: WER and speaker accuracy (see README)
 npm run evaluate -- <dir> --learn 0,1 --change-similarity 0.3,0.5,0.6 --split-middle 0,1   # compare settings
+npm run deb [-- --arch arm64]        # Debian package -> dist/ (scripts/build-deb.js; works on Windows too)
 node scripts/bench-asr.js <FLEURS folder> --variant parakeet-fp32enc-beam4 [--opus]   # speech models' WER (see the file)
 node scripts/bench-speaker.js prepare|embed|report ...   # speaker models on VoxPopuli (see the file)
 npm start                            # http://127.0.0.1:3000
@@ -73,6 +74,7 @@ npm run create-user -- <name> [--admin | --user]   # add a user / reset a passwo
 | `public/static/js/pcm-worklet.js` | AudioWorklet: microphone -> 16 kHz mono Int16, windowed-sinc resampler |
 | `scripts/evaluate.js` | Accuracy evaluation CLI (temporary database, ASR results cached across parameter runs) |
 | `scripts/launch.js` | One-step start behind `start.cmd` / `start.sh`: checks Node, installs missing dependencies and models, starts the server, opens the browser; only opens the browser when VoiceRecon already runs; starts the server again when it exits with `RESTART_CODE` |
+| `scripts/build-deb.js`, `packaging/deb/` | The Debian package: the ar and tar archives are written in JS (no dpkg-deb), the production dependencies come from `npm ci --omit=dev --os=linux --cpu=…` (sherpa-onnx's Linux build); the systemd unit runs `launch.js` as the user `voicerecon` with `/etc/voicerecon/voicerecon.env`, `/usr/bin/voicerecon` runs the CLI tools as that user. The CI job `deb` installs it on Ubuntu and purges it |
 | `src/restart.js` | Restarting from the Users page: `RESTART_CODE` (75) and `supervised()` (`VOICERECON_SUPERVISED=1`, set by the launcher: only then is a restart offered, `POST /api/restart`) |
 | `scripts/` | Also: model downloader, test-audio generator, create-user CLI |
 

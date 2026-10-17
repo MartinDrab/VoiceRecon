@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi
+
+if [ "$1" = purge ]; then
+  cat <<'EOF'
+VoiceRecon's data (users, voices, transcripts, audio, backups) and speech models are kept in
+/var/lib/voicerecon, with its user voicerecon. Once they are no longer needed:
+  sudo rm -r /var/lib/voicerecon && sudo deluser voicerecon
+EOF
+fi
+
+exit 0

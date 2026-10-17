@@ -118,6 +118,55 @@ again, and a match threshold saved on the Voices page no longer applies: it was 
 model, so the new default 0.6 is used until you set another one. `models/3dspeaker_campplus_zh_en_advanced.onnx`
 is then no longer used; keep it if you want to switch back with `SPEAKER_MODEL`.
 
+### Installing on Debian or Ubuntu (.deb)
+
+On a Linux server, VoiceRecon can run as a service from a Debian package. Build the package on
+any computer with Node.js and an internet connection (also Windows), in the VoiceRecon folder:
+
+```bash
+npm run deb
+```
+
+It writes `dist/voicerecon_<version>_amd64.deb` (`-- --arch arm64` for ARM servers; the
+maintainer comes from `git config`, or `-- --maintainer "Name <email>"`). Then, on the server:
+
+1. Install Node.js 22.13 or newer as a package. Debian and Ubuntu ship older ones; NodeSource has
+   current ones:
+
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+   ```
+
+   ```bash
+   sudo apt-get install -y nodejs
+   ```
+
+2. Install the package (copied to the server):
+
+   ```bash
+   sudo apt install ./voicerecon_0.1.0_amd64.deb
+   ```
+
+The service `voicerecon` starts right away and on every boot. The first time, it downloads the
+speech models (about 3 GB); watch it with `journalctl -u voicerecon -f`. Create the first
+administrator with `sudo voicerecon create-user <name> --admin` (or open http://localhost:3000/ on
+the server itself). It listens on 127.0.0.1 until you change `HOST` in
+`/etc/voicerecon/voicerecon.env` (see [Using it from other devices](#using-it-from-other-devices-phone-another-pc));
+after a change, `sudo systemctl restart voicerecon`.
+
+Where things are:
+
+| | |
+|---|---|
+| `/etc/voicerecon/voicerecon.env` | Settings (see [Configuration](#configuration)); kept on upgrades |
+| `/var/lib/voicerecon/data`, `…/models` | Data and speech models, owned by the user `voicerecon` |
+| `/usr/lib/voicerecon` | The app |
+| `sudo voicerecon …` | `create-user`, `backup` (into `/var/lib/voicerecon/backups`), `restore`, `models` |
+
+Restoring a backup on the Users page restarts the service with *Restart now*. To update, install a
+newer package the same way. `sudo apt purge voicerecon` removes the program and its settings but
+keeps `/var/lib/voicerecon` (your transcripts and voices) and the user `voicerecon`.
+
 ### Backup and restore
 
 Everything VoiceRecon keeps is in `DATA_DIR` (`data/`): users, voices and their recordings,

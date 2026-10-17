@@ -1,0 +1,26 @@
+[Unit]
+Description=VoiceRecon: realtime transcription with speaker recognition
+Documentation=https://github.com/MartinDrab/VoiceRecon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=voicerecon
+Group=voicerecon
+EnvironmentFile=/etc/voicerecon/voicerecon.env
+WorkingDirectory=/var/lib/voicerecon
+# The launcher downloads the speech models on the first start (about 3 GB), then runs the server,
+# and starts it again when the Users page asks for a restart (exit code 75, src/restart.js).
+ExecStart=/usr/bin/node /usr/lib/voicerecon/scripts/launch.js --no-browser
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# Moving DATA_DIR or MODELS_DIR elsewhere: allow that folder too (systemctl edit voicerecon).
+ReadWritePaths=/var/lib/voicerecon
+
+[Install]
+WantedBy=multi-user.target

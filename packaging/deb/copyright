@@ -1,0 +1,15 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: VoiceRecon
+Source: https://github.com/MartinDrab/VoiceRecon
+
+Files: *
+Copyright: the VoiceRecon authors
+License: none-stated
+ The project states no license; ask its authors before passing it on.
+
+Files: usr/lib/voicerecon/node_modules/*
+Copyright: the authors of each package
+License: see-each-package
+ The npm packages included (express, ws, sherpa-onnx-node with sherpa-onnx and ONNX Runtime,
+ opusscript, and what they depend on) carry their own license files in their folders under
+ /usr/lib/voicerecon/node_modules.

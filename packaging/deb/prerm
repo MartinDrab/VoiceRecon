@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+  case "$1" in
+    remove) systemctl disable --now voicerecon.service >/dev/null 2>&1 || true ;;
+    upgrade | deconfigure | failed-upgrade) systemctl stop voicerecon.service || true ;;
+  esac
+fi
+
+exit 0

@@ -1,0 +1,52 @@
+#!/bin/sh
+# VoiceRecon's command-line tools (/usr/bin/voicerecon), with the service's settings
+# (/etc/voicerecon/voicerecon.env) and as its user voicerecon, so that what they write stays the
+# service's. The files they read or write must be where that user may, e.g. /var/lib/voicerecon/backups.
+set -e
+
+usage() {
+  cat <<'EOF'
+Usage:
+  sudo voicerecon create-user <name> [--admin | --user]
+        add a user, or set a new password (VOICERECON_PASSWORD or asked for)
+  sudo voicerecon backup [file]
+        everything in one file, also while VoiceRecon runs
+        (without a file: /var/lib/voicerecon/backups/voicerecon-backup-<date>.tar)
+  sudo voicerecon restore <file>
+        replace everything with a backup; stop VoiceRecon first (sudo systemctl stop voicerecon),
+        or restore it on the Users page instead
+  sudo voicerecon models
+        download the speech models (the service does it on its first start)
+EOF
+}
+
+case "${1:-}" in
+  create-user | backup | restore) script=$1 ;;
+  models) script=download-models ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+shift
+
+set -a
+. /etc/voicerecon/voicerecon.env
+set +a
+
+run() {
+  if [ "$(id -u)" = 0 ]; then
+    runuser -u voicerecon -- "$@"
+  elif [ "$(id -un)" = voicerecon ]; then
+    "$@"
+  else
+    echo "Run it with sudo: voicerecon works as the user voicerecon." >&2
+    exit 1
+  fi
+}
+
+if [ "$script" = backup ] && [ $# -eq 0 ]; then
+  run mkdir -p /var/lib/voicerecon/backups
+  cd /var/lib/voicerecon/backups
+fi
+run /usr/bin/node "/usr/lib/voicerecon/scripts/$script.js" "$@"
