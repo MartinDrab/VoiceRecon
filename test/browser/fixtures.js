@@ -20,7 +20,7 @@ function needsSpeech() {
 }
 
 /** A new transcript with audio in the test server: see seed.seedTranscript(). */
-const seedTranscript = (title, lines) => seed.seedTranscript(process.env.VOICERECON_TEST_DATA, title, lines);
+const seedTranscript = (title, lines, options) => seed.seedTranscript(process.env.VOICERECON_TEST_DATA, title, lines, options);
 
 /** A word no other transcript contains, to search for. */
 const uniqueWord = () => `zebra${crypto.randomBytes(4).toString('hex').replace(/\d/g, (d) => 'ghijklmnop'[Number(d)])}`;

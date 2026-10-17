@@ -8,8 +8,9 @@
  *   recordings/...   the voices' recordings
  *   audio/...        the transcripts' audio (audio-store.js)
  * Uploads still waiting to be transcribed are not included. A restore replaces the data folder,
- * keeping the previous one next to it, and must run while VoiceRecon is stopped
- * (scripts/restore.js).
+ * keeping the previous one next to it, and must run while VoiceRecon is stopped: scripts/restore.js,
+ * or a backup uploaded on the Users page, which the server restores when it starts next
+ * (applyPendingRestore(), before anything opens the data).
  */
 
 const crypto = require('crypto');
@@ -25,6 +26,10 @@ const BLOCK = 512;
 const ZEROS = Buffer.alloc(64 * 1024);
 // What an archive may hold (anything else is refused on restore: no "..", no absolute paths).
 const ALLOWED = /^(backup\.json|voicerecon\.db|recordings\/[\w-]+(\/[\w.-]+)*|audio\/[\w.-]+)$/;
+// In the data folder: a backup uploaded on the Users page, restored at the next start, and how that went.
+const PENDING = 'restore-pending.tar';
+const RESULT = 'restore-result.json';
+const UPLOAD = /^restore-upload-[\w-]+\.part$/; // an upload in progress (left over after a crash)
 
 const pad = (size) => (BLOCK - (size % BLOCK)) % BLOCK;
 
@@ -163,6 +168,35 @@ function readArchive(fd) {
   return entries;
 }
 
+/** The files of a backup and what it holds (backup.json): { entries, manifest }; throws if it is not one. */
+function inspect(fd) {
+  const entries = readArchive(fd);
+  const bad = entries.find((e) => !ALLOWED.test(e.name) || e.name.split('/').includes('..'));
+  if (bad) throw new Error(`The backup holds a file it should not: ${bad.name}`);
+  const info = entries.find((e) => e.name === 'backup.json');
+  if (!info || !entries.some((e) => e.name === 'voicerecon.db')) throw new Error('This is not a VoiceRecon backup.');
+  const buf = Buffer.alloc(info.size);
+  fs.readSync(fd, buf, 0, info.size, info.offset);
+  let manifest;
+  try {
+    manifest = JSON.parse(buf.toString('utf8'));
+  } catch {
+    throw new Error('This is not a VoiceRecon backup.');
+  }
+  if (manifest.app !== 'VoiceRecon' || manifest.format !== FORMAT) throw new Error('This is not a VoiceRecon backup (or one of a newer version).');
+  return { entries, manifest };
+}
+
+/** What a backup file holds, checked without extracting anything (backup.json); throws if it is not one. */
+function checkBackup(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    return inspect(fd).manifest;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /**
  * Restores a backup into `dataDir`: the files go to a new folder first, which replaces `dataDir`
  * only once all is there and its database opens; the previous data folder is kept, renamed.
@@ -174,16 +208,7 @@ function restoreBackup(file, dataDir) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const target = `${dataDir}.restoring-${stamp}`;
   try {
-    const entries = readArchive(fd);
-    const bad = entries.find((e) => !ALLOWED.test(e.name) || e.name.split('/').includes('..'));
-    if (bad) throw new Error(`The backup holds a file it should not: ${bad.name}`);
-    const info = entries.find((e) => e.name === 'backup.json');
-    if (!info || !entries.some((e) => e.name === 'voicerecon.db')) throw new Error('This is not a VoiceRecon backup.');
-    const buf = Buffer.alloc(info.size);
-    fs.readSync(fd, buf, 0, info.size, info.offset);
-    const manifest = JSON.parse(buf.toString('utf8'));
-    if (manifest.app !== 'VoiceRecon' || manifest.format !== FORMAT) throw new Error('This is not a VoiceRecon backup (or one of a newer version).');
-
+    const { entries, manifest } = inspect(fd);
     fs.mkdirSync(target, { recursive: true });
     const chunk = Buffer.alloc(1 << 20);
     for (const e of entries) {
@@ -224,4 +249,77 @@ function restoreBackup(file, dataDir) {
   }
 }
 
-module.exports = { prepareBackup, restoreBackup, backupName };
+// ---------- restoring from the Users page ----------
+
+/** The backup waiting to be restored at the next start: what it holds, with bytes and uploadedAt; or null. */
+function pendingRestore(dataDir) {
+  const file = path.join(dataDir, PENDING);
+  try {
+    const { size, mtimeMs } = fs.statSync(file);
+    return { ...checkBackup(file), bytes: size, uploadedAt: Math.round(mtimeMs) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keeps an uploaded file to restore at the next start, if it is a backup (else throws and leaves it);
+ * it replaces one waiting already.
+ */
+function setPendingRestore(dataDir, file) {
+  checkBackup(file);
+  fs.renameSync(file, path.join(dataDir, PENDING));
+  return pendingRestore(dataDir);
+}
+
+function cancelPendingRestore(dataDir) {
+  fs.rmSync(path.join(dataDir, PENDING), { force: true });
+}
+
+/** How the last restore at startup went (applyPendingRestore()), until dismissed; or null. */
+function restoreResult(dataDir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dataDir, RESULT), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function dismissRestoreResult(dataDir) {
+  fs.rmSync(path.join(dataDir, RESULT), { force: true });
+}
+
+/**
+ * At startup, before anything opens the data: restores the backup uploaded on the Users page, if
+ * there is one, and notes how that went for the Users page. It is tried once: a backup that cannot
+ * be restored is deleted and the data stay as they were. Never throws.
+ * @returns {{ ok: boolean, at: number, createdAt?: string, previous?: string | null, error?: string } | null}
+ */
+function applyPendingRestore(dataDir) {
+  const pending = path.join(dataDir, PENDING);
+  try {
+    for (const f of fs.readdirSync(dataDir)) if (UPLOAD.test(f)) fs.rmSync(path.join(dataDir, f), { force: true });
+  } catch { /* no data folder yet */ }
+  if (!fs.existsSync(pending)) return null;
+  // Out of the data folder while it is replaced: Windows cannot rename a folder with an open file.
+  const file = `${dataDir}.restore-${new Date().toISOString().replace(/[:.]/g, '-')}.tar`;
+  let result;
+  try {
+    fs.renameSync(pending, file);
+    const { manifest, previous } = restoreBackup(file, dataDir);
+    result = { ok: true, at: Date.now(), createdAt: manifest.createdAt, previous };
+  } catch (err) {
+    result = { ok: false, at: Date.now(), error: err.message };
+  } finally {
+    fs.rmSync(file, { force: true });
+    fs.rmSync(pending, { force: true });
+  }
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, RESULT), JSON.stringify(result));
+  return result;
+}
+
+module.exports = {
+  prepareBackup, restoreBackup, backupName, checkBackup,
+  pendingRestore, setPendingRestore, cancelPendingRestore, restoreResult, dismissRestoreResult, applyPendingRestore,
+};

@@ -1,9 +1,11 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const path = require('path');
+const { pipeline } = require('stream/promises');
 const express = require('express');
 
 const config = require('./config');
@@ -16,12 +18,22 @@ const { VoiceManager } = require('./voices');
 const { TranscriptStore } = require('./transcripts');
 const { UploadQueue } = require('./uploads');
 const { AudioStore } = require('./audio-store');
-const { prepareBackup } = require('./backup');
+const {
+  prepareBackup, applyPendingRestore, pendingRestore, setPendingRestore, cancelPendingRestore, restoreResult, dismissRestoreResult,
+} = require('./backup');
 const { attachWebSocket } = require('./ws');
 
 const PUBLIC = path.join(config.root, 'public');
 const tls = Boolean(config.tlsCert && config.tlsKey);
 
+// A backup uploaded on the Users page replaces the data before anything opens them.
+const restored = applyPendingRestore(config.dataDir);
+if (restored && restored.ok) {
+  console.log(`Restored the uploaded backup of ${restored.createdAt}.`
+    + (restored.previous ? ` The previous data are in ${restored.previous}; delete that folder once everything works.` : ''));
+} else if (restored) {
+  console.error(`Restoring the uploaded backup failed: ${restored.error} The data stay as they were.`);
+}
 const db = openDatabase(config.dataDir);
 const auth = new Auth(db, { sessionTtlHours: config.sessionTtlHours, secureCookies: tls });
 const engine = new SpeechEngine(config);
@@ -219,7 +231,34 @@ api.put('/settings/vocabulary', admin, json, (req, res) => {
   voices.setVocabulary(req.body.words);
   res.json({ vocabulary: voices.vocabulary });
 });
-// Everything VoiceRecon keeps as one file (backup.js); restored with npm run restore.
+// A backup uploaded here is restored when VoiceRecon starts next (applyPendingRestore() above).
+api.get('/backup/restore', admin, (_req, res) => {
+  res.json({ pending: pendingRestore(config.dataDir), result: restoreResult(config.dataDir) });
+});
+api.post('/backup/restore', admin, async (req, res) => {
+  const part = path.join(config.dataDir, `restore-upload-${crypto.randomUUID()}.part`);
+  try {
+    await pipeline(req, fs.createWriteStream(part));
+    let pending;
+    try {
+      pending = setPendingRestore(config.dataDir, part);
+    } catch {
+      throw new HttpError(400, 'This file is not a VoiceRecon backup, or it is damaged or from a newer version.');
+    }
+    res.json({ pending });
+  } finally {
+    fs.rmSync(part, { force: true });
+  }
+});
+api.delete('/backup/restore', admin, (_req, res) => {
+  cancelPendingRestore(config.dataDir);
+  res.json({ ok: true });
+});
+api.delete('/backup/restore/result', admin, (_req, res) => {
+  dismissRestoreResult(config.dataDir);
+  res.json({ ok: true });
+});
+// Everything VoiceRecon keeps as one file (backup.js); restored with npm run restore or from the Users page.
 api.get('/backup', admin, async (_req, res) => {
   const backup = prepareBackup(db, config.dataDir);
   res.set({
@@ -245,7 +284,15 @@ api.put('/settings/audio', admin, json, (req, res) => {
 // saved transcripts (everyone can read and edit; deleting is for the author and administrators)
 api.get('/transcripts', user, (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q : '';
-  res.json(transcripts.list({ q, limit: Number(req.query.limit), offset: Number(req.query.offset) }));
+  // Filters: ?voice=<voice id>, ?from= and ?to= (ms; started at or after from, before to).
+  const number = (v) => (v === undefined || v === '' ? null : Number(v));
+  const voiceId = number(req.query.voice);
+  const from = number(req.query.from);
+  const to = number(req.query.to);
+  if ((voiceId !== null && !Number.isInteger(voiceId)) || [from, to].some((x) => x !== null && !Number.isFinite(x))) {
+    throw new HttpError(400, 'Invalid filter.');
+  }
+  res.json(transcripts.list({ q, voiceId, from, to, limit: Number(req.query.limit), offset: Number(req.query.offset) }));
 });
 // An uploaded recording becomes a transcript in the background. The browser converts any audio file
 // to 16 kHz mono 16-bit WAV; ?name= is the file name (the title), ?startedAt= when it was recorded (ms),
@@ -295,6 +342,11 @@ api.get('/transcripts/:id/audio', user, async (req, res) => {
   };
   const from = time(req.query.start);
   const to = time(req.query.end);
+  if (req.query.format === 'opus') {
+    // The whole transcript, about 10 times smaller than WAV (to save it).
+    await audio.sendOpus(res, tid, { filename: req.query.download ? `${transcripts.fileBase(tid)}.opus` : undefined });
+    return;
+  }
   const filename = req.query.download ? `${transcripts.fileBase(tid)}.wav` : undefined;
   await audio.send(res, tid, { from, to, filename });
 });

@@ -60,8 +60,13 @@
       <div class="card mt">
         <h2 data-i18n>Backup</h2>
         <p class="muted small" data-i18n>One file with everything: users, voices and their recordings, transcripts and their audio, and the settings.</p>
-        <a class="btn" id="backup" href="/api/backup" download data-i18n>Download a backup</a>
-        <p class="muted small" data-i18n>To restore a backup, stop VoiceRecon and run npm run restore -- followed by the backup file, in the VoiceRecon folder. The current data are kept next to the restored ones.</p>
+        <div class="row">
+          <a class="btn" id="backup" href="/api/backup" download data-i18n>Download a backup</a>
+          <button class="btn" type="button" id="restore" data-i18n>Restore a backup…</button>
+        </div>
+        <input type="file" id="restore-file" accept=".tar,application/x-tar" hidden>
+        <div class="restore-status" id="restore-status"></div>
+        <p class="muted small" data-i18n>A backup is restored when VoiceRecon starts next: everything in it is replaced by the backup, and everyone signs in again. The current data are kept in a folder next to it. With VoiceRecon stopped, npm run restore -- followed by the backup file does the same.</p>
       </div>
     </section>
 

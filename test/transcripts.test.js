@@ -235,6 +235,41 @@ function unzip(buf) {
   return files;
 }
 
+test('the list filters by voice (everything one person said) and by date', () => {
+  const { db, store, jirka, klara } = setup();
+  const day = (d) => Date.UTC(2026, 9, d, 9, 0, 0);
+  const make = (d, lines) => {
+    const t = store.create(1, { title: `day ${d}`, startedAt: day(d) });
+    lines.forEach(([who, text], i) => store.appendLine(t.id, {
+      start: i * 3, end: i * 3 + 2, spokenAt: day(d) + i * 3000, text, seconds: 2, model: 'm',
+      speaker: who ? { voiceId: who, key: `v:${who}`, label: who === jirka ? 'Jirka' : 'Klára' } : { voiceId: null, key: 'u:1:u1', label: 'Speaker 1' },
+    }));
+    return t.id;
+  };
+  const a = make(10, [[jirka, 'Dobrý den, začneme rozpočtem.'], [klara, 'Rozpočet je hotový.'], [jirka, 'Tak ho projdeme.']]);
+  const b = make(12, [[klara, 'Kdo vezme zápis z porady?'], [null, 'Já, rozpočet pošlu potom.']]);
+  const c = make(14, [[jirka, 'Rozpočet schválíme zítra.'], [jirka, 'Ještě jedna věc.'], [jirka, 'Tři.'], [jirka, 'Čtyři.']]);
+  const ids = (r) => r.transcripts.map((t) => t.id);
+
+  // A voice: the transcripts it speaks in, its line count and its first three lines.
+  const j = store.list({ voiceId: jirka });
+  assert.deepStrictEqual([j.total, ids(j)], [2, [c, a]]);
+  assert.deepStrictEqual(j.transcripts.map((t) => t.hits), [4, 2]);
+  assert.deepStrictEqual(j.transcripts[0].snippets.map((s) => s.text), ['Rozpočet schválíme zítra.', 'Ještě jedna věc.', 'Tři.']);
+  // With a query, only the voice's lines count: Klára said "rozpočet" in a, not in b.
+  const k = store.list({ q: 'rozpočet', voiceId: klara });
+  assert.deepStrictEqual(ids(k), [a]);
+  const unmarked = (text) => text.replaceAll('\u0002', '').replaceAll('\u0003', ''); // the search-hit marks
+  assert.deepStrictEqual(k.transcripts[0].snippets.map((s) => unmarked(s.text)), ['Rozpočet je hotový.']);
+  assert.deepStrictEqual(ids(store.list({ q: 'rozpočet' })), [c, b, a]);
+  // Dates: started from (included) to (excluded).
+  assert.deepStrictEqual(ids(store.list({ from: day(11), to: day(14) })), [b]);
+  assert.deepStrictEqual(ids(store.list({ q: 'rozpočet', from: day(11) })), [c, b]);
+  assert.deepStrictEqual(ids(store.list({ voiceId: klara, to: day(11) })), [a]);
+  assert.strictEqual(store.list({ voiceId: 999 }).total, 0);
+  db.close();
+});
+
 test('export as TXT, SRT and JSON', () => {
   const { db, store, jirka } = setup();
   const t = store.create(1);

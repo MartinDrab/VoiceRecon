@@ -122,6 +122,10 @@ const MIGRATIONS = [
   `
   ALTER TABLE voice_samples ADD COLUMN mixed REAL;
   `,
+  // History's filter by voice ("everything Anna said").
+  `
+  CREATE INDEX transcript_lines_voice ON transcript_lines(voice_id);
+  `,
 ];
 
 function openDatabase(dataDir) {

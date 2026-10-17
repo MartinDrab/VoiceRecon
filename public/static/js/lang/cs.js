@@ -133,6 +133,13 @@ export default {
   '{n} line|{n} lines': { one: '{n} řádek', few: '{n} řádky', other: '{n} řádků' },
   '{n} matching line|{n} matching lines': { one: '{n} odpovídající řádek', few: '{n} odpovídající řádky', other: '{n} odpovídajících řádků' },
   '{n} transcript found.|{n} transcripts found.': { one: 'Nalezen {n} přepis.', few: 'Nalezeny {n} přepisy.', other: 'Nalezeno {n} přepisů.' },
+  'Speaker': 'Mluvčí',
+  'Everyone': 'Všichni',
+  'From': 'Od',
+  'To': 'Do',
+  'Clear filters': 'Zrušit filtry',
+  'No transcript matches these filters.': 'Filtrům neodpovídá žádný přepis.',
+  '{name}: {n} line|{name}: {n} lines': { one: '{name}: {n} řádek', few: '{name}: {n} řádky', other: '{name}: {n} řádků' },
 
   // transcribing a file
   'Transcribe a file': 'Přepsat soubor',
@@ -322,6 +329,7 @@ export default {
   // exports
   'Subtitles for web video players': 'Titulky pro webové přehrávače videa',
   'Word document': 'Dokument Wordu',
+  'The audio of the whole transcript, about 10 times smaller (Ogg Opus)': 'Zvuk celého přepisu, asi desetkrát menší (Ogg Opus)',
 
   // transcribing again
   'Transcribe again': 'Přepsat znovu',
@@ -352,8 +360,25 @@ export default {
   'One file with everything: users, voices and their recordings, transcripts and their audio, and the settings.':
     'Jeden soubor se vším: uživatelé, hlasy a jejich nahrávky, přepisy a jejich zvuk a nastavení.',
   'Download a backup': 'Stáhnout zálohu',
-  'To restore a backup, stop VoiceRecon and run npm run restore -- followed by the backup file, in the VoiceRecon folder. The current data are kept next to the restored ones.':
-    'Zálohu obnovíte tak, že VoiceRecon zastavíte a ve složce VoiceRecon spustíte npm run restore -- a za tím soubor zálohy. Dosavadní data zůstanou uložená vedle obnovených.',
+  'Restore a backup…': 'Obnovit zálohu…',
+  'A backup is restored when VoiceRecon starts next: everything in it is replaced by the backup, and everyone signs in again. The current data are kept in a folder next to it. With VoiceRecon stopped, npm run restore -- followed by the backup file does the same.':
+    'Záloha se obnoví při příštím spuštění VoiceRecon: vše v něm se nahradí zálohou a všichni se znovu přihlásí. Současná data zůstanou ve složce vedle. Při zastaveném VoiceRecon totéž udělá npm run restore -- a soubor zálohy.',
+  'Restore “{name}”? When VoiceRecon starts next, everything in it is replaced by this backup, and everyone signs in again.':
+    'Obnovit „{name}“? Při příštím spuštění VoiceRecon se vše v něm nahradí touto zálohou a všichni se znovu přihlásí.',
+  'Uploading the backup… {percent}': 'Nahrávání zálohy… {percent}',
+  'The backup will be restored when VoiceRecon starts next.': 'Záloha se obnoví při příštím spuštění VoiceRecon.',
+  'Waiting to be restored when VoiceRecon starts next: the backup of {date} ({holds}). Restart VoiceRecon to restore it.':
+    'Čeká na obnovení při příštím spuštění VoiceRecon: záloha z {date} ({holds}). Obnovíte ji restartem VoiceRecon.',
+  'Cancel the restore': 'Zrušit obnovení',
+  'The restore is cancelled.': 'Obnovení je zrušeno.',
+  'The backup of {date} was restored when VoiceRecon started.': 'Záloha z {date} byla obnovena při spuštění VoiceRecon.',
+  'The previous data are in {folder}; delete that folder once everything works.': 'Předchozí data jsou ve složce {folder}; až vše funguje, smažte ji.',
+  'Restoring the uploaded backup failed when VoiceRecon started: {error} The data stayed as they were.':
+    'Obnovení nahrané zálohy při spuštění VoiceRecon selhalo: {error} Data zůstala, jak byla.',
+  'OK': 'OK',
+  '{n} user|{n} users': { one: '{n} uživatel', few: '{n} uživatelé', other: '{n} uživatelů' },
+  '{n} voice|{n} voices': { one: '{n} hlas', few: '{n} hlasy', other: '{n} hlasů' },
+  '{n} transcript|{n} transcripts': { one: '{n} přepis', few: '{n} přepisy', other: '{n} přepisů' },
 
   // audio of transcripts
   'The audio of the whole transcript': 'Zvuk celého přepisu',

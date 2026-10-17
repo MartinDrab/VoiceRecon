@@ -155,4 +155,42 @@ test('exports download as files', async ({ page }) => {
   const wav = await download('export-wav');
   expect(wav.name).toMatch(/\.wav$/);
   expect(wav.body.length).toBe(44 + 14 * 32000);
+  const opus = await download('export-opus');
+  expect(opus.name).toMatch(new RegExp(`^transcript-${id}-\\d{4}-\\d{2}-\\d{2}\\.opus$`));
+  expect(opus.body.subarray(0, 4).toString('latin1')).toBe('OggS');
+  expect(opus.body.length).toBeLessThan(wav.body.length / 5);
+});
+
+test('the list filters by voice and by date, and a transcript leads back to the filtered list', async ({ page }) => {
+  // Days no other test uses, so that repeated runs do not see each other's transcripts.
+  const first = Date.UTC(2040 + Math.floor(Math.random() * 50), 2, 2, 9);
+  const later = first + 3 * 24 * 3600 * 1000;
+  const day = (ms) => new Date(ms).toLocaleDateString('sv-SE'); // YYYY-MM-DD, as date fields take it
+  const withAnna = await seedTranscript('Filter Anna', [[1, 1, 'Shall we start?'], [4, 'Anna', 'Yes, with the budget.'], [7, 'Anna', 'Then travel.']], { startedAt: first });
+  await seedTranscript('Filter others', [[1, 1, 'Nobody else here.']], { startedAt: later });
+  await page.goto('/history');
+  const items = page.locator('.history-item');
+  await page.getByLabel('From', { exact: true }).fill(day(first));
+  await page.getByLabel('To', { exact: true }).fill(day(later));
+  await expect(items.locator('.history-title')).toHaveText(['Filter others', 'Filter Anna']);
+  await expect(page.locator('#note')).toHaveText('2 transcripts found.');
+
+  // Everything Anna said in that time.
+  await page.getByLabel('Speaker', { exact: true }).selectOption({ label: 'Anna' });
+  await expect(items.locator('.history-title')).toHaveText(['Filter Anna']);
+  await expect(items.first()).toContainText('Anna: 2 lines');
+  await expect(items.first().locator('.snippet')).toHaveText(['Yes, with the budget.', 'Then travel.']);
+  await expect(page).toHaveURL(new RegExp(`\\?voice=\\d+&from=${day(first)}&to=${day(later)}$`));
+
+  // A transcript leads back to the list as it was.
+  await items.first().locator('.history-title').click();
+  await expect(page).toHaveURL(new RegExp(`/history/${withAnna}\\?voice=\\d+&from=`));
+  await page.locator('#back').click();
+  await expect(items.locator('.history-title')).toHaveText(['Filter Anna']);
+  await expect(page.getByLabel('From', { exact: true })).toHaveValue(day(first));
+
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page).toHaveURL(/\/history$/);
+  await expect(page.getByLabel('Speaker', { exact: true })).toHaveValue('');
+  await expect(page.getByRole('button', { name: 'Clear filters' })).toBeHidden();
 });

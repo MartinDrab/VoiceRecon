@@ -77,6 +77,7 @@ class OpusWriter {
     this.serial = (Math.random() * 0x100000000) >>> 0;
     this.sequence = 0;
     this.samples = 0; // encoded so far
+    this.frames = 0; // packets so far (20 ms each)
     this.rest = new Int16Array(0); // less than a frame, waiting for more
     this.packets = [];
     const head = Buffer.alloc(19);
@@ -111,9 +112,29 @@ class OpusWriter {
 
   encode(frame, real = FRAME) {
     const copy = Int16Array.from(frame);
-    this.packets.push(Buffer.from(this.encoder.encode(Buffer.from(copy.buffer), FRAME)));
+    this.add(Buffer.from(this.encoder.encode(Buffer.from(copy.buffer), FRAME)), real);
+  }
+
+  /** An encoded 20 ms packet, e.g. one of another file (opusPackets()) or silence. */
+  add(packet, real = FRAME) {
+    this.packets.push(packet);
     this.samples += real;
+    this.frames++;
     if (this.packets.length >= PAGE_PACKETS) this.flush();
+  }
+
+  /** 20 ms of silence. */
+  silence() {
+    this.add(silentPacket());
+  }
+
+  /** What is left of the samples written, padded to a whole frame (before packets of another file). */
+  pad() {
+    if (!this.rest.length) return;
+    const frame = new Int16Array(FRAME);
+    frame.set(this.rest);
+    this.rest = new Int16Array(0);
+    this.encode(frame);
   }
 
   flush(flags = 0) {
@@ -138,6 +159,19 @@ class OpusWriter {
     this.flush(4);
     this.encoder.delete();
   }
+}
+
+let silent = null;
+
+/** One encoded 20 ms frame of silence (made once). */
+function silentPacket() {
+  if (!silent) {
+    const encoder = new OpusScript(SAMPLE_RATE, 1, OpusScript.Application.AUDIO);
+    encoder.setBitrate(BITRATE);
+    silent = Buffer.from(encoder.encode(Buffer.alloc(2 * FRAME), FRAME));
+    encoder.delete();
+  }
+  return silent;
 }
 
 // ---------- reading ----------
@@ -205,6 +239,27 @@ function opusSamples(file) {
 }
 
 /**
+ * The audio packets of an Ogg Opus file (20 ms each), a page at a time: arrays of Buffers. Copying
+ * them into another file (OpusWriter.add()) needs no decoding.
+ * @param {string} file
+ */
+function* opusPackets(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    for (const p of pages(fd, fs.fstatSync(fd).size).slice(2)) { // after OpusHead and OpusTags
+      if (!p.packets.length) continue;
+      const from = p.packets[0][0];
+      const [lastStart, lastLength] = p.packets[p.packets.length - 1];
+      const body = Buffer.alloc(lastStart + lastLength - from);
+      fs.readSync(fd, body, 0, body.length, from);
+      yield p.packets.map(([start, length]) => body.subarray(start - from, start - from + length));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
  * Decodes samples `from` to `to` (16 kHz sample numbers) of an Ogg Opus file, as Buffers of
  * 16-bit samples. Decoding starts a page early, so the decoder has settled when `from` comes.
  * @param {string} file
@@ -246,4 +301,4 @@ function* opusDecode(file, from, to) {
   }
 }
 
-module.exports = { OpusWriter, opusSamples, opusDecode, crc, PRE_SKIP };
+module.exports = { OpusWriter, opusSamples, opusDecode, opusPackets, crc, PRE_SKIP, FRAME };

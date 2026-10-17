@@ -11,6 +11,7 @@ const MAX_LABEL = 60;
 const MAX_TITLE = 120;
 const MARK_START = '\u0002'; // search-hit markers in snippets; the browser turns them into <mark>
 const MARK_END = '\u0003';
+const SNIPPET_CHARS = 140; // a voice's lines shown in History's list (about as long as search snippets)
 
 const two = (n) => String(n).padStart(2, '0');
 
@@ -337,26 +338,51 @@ class TranscriptStore {
   /**
    * Newest first. With a query, only transcripts that contain all its words somewhere (ignoring
    * case and diacritics, words matched as prefixes), or whose title contains it; each with a few
-   * snippets of lines that contain any of the words.
+   * snippets of lines that contain any of the words. With `voiceId`, only transcripts in which that
+   * voice speaks, and only its lines count for the query and the snippets ("everything Anna
+   * said"; without a query its first lines are the snippets). `from` and `to` (ms) keep the
+   * transcripts that started in that time.
+   * @param {{ q?: string, voiceId?: number | null, from?: number | null, to?: number | null, limit?: number, offset?: number }} [options]
    */
-  /** @param {{ q?: string, limit?: number, offset?: number }} [options] */
-  list({ q = '', limit = 30, offset = 0 } = {}) {
+  list({ q = '', voiceId = null, from = null, to = null, limit = 30, offset = 0 } = {}) {
     limit = Math.max(1, Math.min(100, Number(limit) || 30));
     offset = Math.max(0, Number(offset) || 0);
+    const where = [];
+    const args = [];
+    if (Number.isFinite(from)) {
+      where.push('started_at >= ?');
+      args.push(from);
+    }
+    if (Number.isFinite(to)) {
+      where.push('started_at < ?');
+      args.push(to);
+    }
+    if (voiceId !== null) {
+      where.push('id IN (SELECT transcript_id FROM transcript_lines WHERE voice_id = ?)');
+      args.push(voiceId);
+    }
     const terms = ftsTerms(q);
     if (!terms.length) {
-      const total = this.db.prepare('SELECT COUNT(*) AS n FROM transcripts').get().n;
-      const rows = this.db.prepare('SELECT * FROM transcripts ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?').all(limit, offset);
-      return { total, transcripts: this.summaries(rows) };
+      const filter = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      const total = this.db.prepare(`SELECT COUNT(*) AS n FROM transcripts ${filter}`).get(...args).n;
+      const rows = this.db.prepare(`SELECT * FROM transcripts ${filter} ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?`)
+        .all(...args, limit, offset);
+      if (voiceId === null) return { total, transcripts: this.summaries(rows) };
+      const said = this.voiceLines(voiceId, rows.map((t) => t.id));
+      return {
+        total,
+        transcripts: this.summaries(rows).map((t) => ({ ...t, hits: said.get(t.id)?.count || 0, snippets: said.get(t.id)?.snippets || [] })),
+      };
     }
     // The index matches single lines, so every word is looked up on its own and the transcripts
     // containing all of them are intersected.
+    const byVoice = voiceId === null ? [] : [voiceId];
     const byTerm = this.db.prepare(`SELECT DISTINCT l.transcript_id AS id
       FROM transcript_lines_fts JOIN transcript_lines l ON l.id = transcript_lines_fts.rowid
-      WHERE transcript_lines_fts MATCH ?`);
+      WHERE transcript_lines_fts MATCH ?${byVoice.length ? ' AND l.voice_id = ?' : ''}`);
     let found = null;
     for (const term of terms) {
-      const ids = new Set(byTerm.all(term).map((r) => r.id));
+      const ids = new Set(byTerm.all(term, ...byVoice).map((r) => r.id));
       found = found ? new Set([...found].filter((id) => ids.has(id))) : ids;
       if (!found.size) break;
     }
@@ -366,10 +392,10 @@ class TranscriptStore {
     const ids = [...new Set([...found, ...titled])];
     const rows = ids.length
       ? this.db.prepare(`SELECT * FROM transcripts WHERE id IN (${ids.map(() => '?').join(',')})
-          ORDER BY started_at DESC, id DESC`).all(...ids)
+          ${where.map((w) => `AND ${w}`).join(' ')} ORDER BY started_at DESC, id DESC`).all(...ids, ...args)
       : [];
     const page = rows.slice(offset, offset + limit);
-    const hits = this.searchHits(terms.join(' OR '), page.map((t) => t.id).filter((id) => found.has(id)));
+    const hits = this.searchHits(terms.join(' OR '), page.map((t) => t.id).filter((id) => found.has(id)), voiceId);
     return {
       total: rows.length,
       transcripts: this.summaries(page).map((t) => {
@@ -380,18 +406,20 @@ class TranscriptStore {
   }
 
   /**
-   * For each of the given transcripts, how many lines match and snippets of the first three:
-   * Map transcript id -> { count, snippets: [{ lineId, text }] }.
+   * For each of the given transcripts, how many lines match (of the voice, if given) and snippets
+   * of the first three: Map transcript id -> { count, snippets: [{ lineId, text }] }.
    */
-  searchHits(match, transcriptIds) {
+  searchHits(match, transcriptIds, voiceId = null) {
     const out = new Map();
     if (!transcriptIds.length) return out;
+    const byVoice = voiceId === null ? [] : [voiceId];
     const first = this.db.prepare(`SELECT id, lineId, count FROM (
         SELECT l.transcript_id AS id, l.id AS lineId, COUNT(*) OVER (PARTITION BY l.transcript_id) AS count,
           ROW_NUMBER() OVER (PARTITION BY l.transcript_id ORDER BY l.start_sec, l.id) AS n
         FROM transcript_lines_fts JOIN transcript_lines l ON l.id = transcript_lines_fts.rowid
         WHERE transcript_lines_fts MATCH ? AND l.transcript_id IN (${transcriptIds.map(() => '?').join(',')})
-      ) WHERE n <= 3 ORDER BY id, n`).all(match, ...transcriptIds);
+          ${byVoice.length ? 'AND l.voice_id = ?' : ''}
+      ) WHERE n <= 3 ORDER BY id, n`).all(match, ...transcriptIds, ...byVoice);
     if (!first.length) return out;
     // Snippets only for the lines shown.
     const snippets = new Map(this.db.prepare(`SELECT rowid AS lineId,
@@ -401,6 +429,26 @@ class TranscriptStore {
     for (const r of first) {
       if (!out.has(r.id)) out.set(r.id, { count: r.count, snippets: [] });
       out.get(r.id).snippets.push({ lineId: r.lineId, text: snippets.get(r.lineId) || '' });
+    }
+    return out;
+  }
+
+  /**
+   * For each of the given transcripts, how many lines the voice has and its first three, as
+   * snippets: Map transcript id -> { count, snippets: [{ lineId, text }] }.
+   */
+  voiceLines(voiceId, transcriptIds) {
+    const out = new Map();
+    if (!transcriptIds.length) return out;
+    const rows = this.db.prepare(`SELECT id, lineId, text, count FROM (
+        SELECT transcript_id AS id, id AS lineId, text, COUNT(*) OVER (PARTITION BY transcript_id) AS count,
+          ROW_NUMBER() OVER (PARTITION BY transcript_id ORDER BY start_sec, id) AS n
+        FROM transcript_lines WHERE voice_id = ? AND transcript_id IN (${transcriptIds.map(() => '?').join(',')})
+      ) WHERE n <= 3 ORDER BY id, n`).all(voiceId, ...transcriptIds);
+    for (const r of rows) {
+      if (!out.has(r.id)) out.set(r.id, { count: r.count, snippets: [] });
+      const text = r.text.length > SNIPPET_CHARS ? `${r.text.slice(0, SNIPPET_CHARS).replace(/\s+\S*$/, '')}…` : r.text;
+      out.get(r.id).snippets.push({ lineId: r.lineId, text });
     }
     return out;
   }

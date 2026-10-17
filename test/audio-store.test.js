@@ -10,6 +10,7 @@ const path = require('path');
 const { Writable } = require('stream');
 const { openDatabase, setSetting } = require('../src/db');
 const { AudioStore, wavHeader } = require('../src/audio-store');
+const { opusSamples, opusDecode } = require('../src/opus');
 
 const folders = [];
 test.after(() => {
@@ -130,6 +131,48 @@ test('kept audio is Ogg Opus: live audio as it comes, an uploaded WAV file once 
   assert.strictEqual(Buffer.concat(pcm).length, 4 * 32000);
   db.close();
 });
+
+for (const compress of [true, false]) {
+  test(`the whole audio downloads as one Ogg Opus file, from ${compress ? 'Opus pieces (copied)' : 'raw pieces (encoded now)'}`, async () => {
+    const { dataDir, db, store, transcript } = setup({ compress });
+    const tid = transcript(1);
+    const tone = (seconds) => {
+      const b = Buffer.alloc(Math.round(seconds * 16000) * 2);
+      for (let i = 0; i < b.length / 2; i++) b.writeInt16LE(Math.round(8000 * Math.sin(i / 9)), 2 * i);
+      return b;
+    };
+    const live = store.startLive();
+    live.write(tone(2.5));
+    store.add(tid, live.name, { start: 3 });
+    live.end();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const wav = path.join(dataDir, 'upload.wav');
+    fs.writeFileSync(wav, Buffer.concat([wavHeader(4 * 32000), tone(4)]));
+    store.add(tid, wav, { start: 13, dataStart: 44, move: true });
+    await store.converted();
+    assert.deepStrictEqual(store.pieces(tid).map((p) => p.opus), [compress, compress]);
+
+    const chunks = [];
+    for await (const chunk of store.opus(tid).chunks) chunks.push(chunk);
+    const file = path.join(dataDir, 'download.opus');
+    fs.writeFileSync(file, Buffer.concat(chunks));
+    // From the first piece's start (3 s) to the end of the last (17 s), to within two frames.
+    const seconds = opusSamples(file) / 16000;
+    assert.ok(Math.abs(seconds - 14) <= 0.04, `${seconds} s`);
+    assert.ok(fs.statSync(file).size < (14 * 32000) / 7, 'much smaller than WAV');
+    const all = Buffer.concat([...opusDecode(file, 0, Infinity)]);
+    const loudness = (from, to) => {
+      let e = 0;
+      for (let i = Math.round(from * 16000); i < Math.round(to * 16000); i++) e += all.readInt16LE(2 * i) ** 2;
+      return Math.sqrt(e / ((to - from) * 16000));
+    };
+    assert.ok(loudness(0.1, 2.4) > 4000, 'the first piece');
+    assert.ok(loudness(2.6, 9.9) < 50, 'silence between');
+    assert.ok(loudness(10.1, 13.9) > 4000, 'the second piece, at its time');
+    assert.throws(() => store.opus(transcript(2)), /no audio/);
+    db.close();
+  });
+}
 
 test('live audio that never got a transcript is deleted when it ends', async () => {
   const { db, store } = setup();

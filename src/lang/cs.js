@@ -58,6 +58,8 @@ module.exports = {
   'The start of the part must be a number of seconds.': 'Začátek části musí být počet sekund.',
   'This transcript has no audio.': 'Tento přepis nemá zvuk.',
   'Not an Ogg Opus file.': 'Nejde o soubor Ogg Opus.',
+  'Invalid filter.': 'Neplatný filtr.',
+  'This file is not a VoiceRecon backup, or it is damaged or from a newer version.': 'Tento soubor není záloha VoiceRecon, nebo je poškozený či z novější verze.',
   'Wait until the transcript is finished.': 'Počkejte, až bude přepis hotový.',
   'That speaker is not in this transcript.': 'Tento mluvčí v přepisu není.',
   'Only the author or an administrator can transcribe this again.': 'Znovu přepsat to může jen autor nebo správce.',

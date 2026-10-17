@@ -49,9 +49,10 @@ function seedUsers(dataDir, password) {
  * @param {string} title
  * @param {[number, number | string, string][]} lines [start (s), speaker, text]: a number is an
  *   unknown speaker ("Speaker n"), a string the name of a saved voice
+ * @param {{ startedAt?: number }} [options] when it started (ms)
  * @returns {Promise<number>} its id
  */
-function seedTranscript(dataDir, title, lines) {
+function seedTranscript(dataDir, title, lines, { startedAt = STARTED } = {}) {
   return withDatabase(dataDir, async (db) => {
     const voices = voiceManager(db, dataDir);
     const store = new TranscriptStore(db, voices);
@@ -60,14 +61,14 @@ function seedTranscript(dataDir, title, lines) {
     db.exec('BEGIN IMMEDIATE'); // all lines at once, while the server waits
     let id;
     try {
-      id = store.create(admin, { title, startedAt: STARTED }).id;
+      id = store.create(admin, { title, startedAt }).id;
       for (const [start, who, text] of lines) {
         let speaker = { voiceId: null, key: `u:1:u${who}`, label: `Speaker ${who}` };
         if (typeof who === 'string') {
           const voiceId = db.prepare('SELECT id FROM voices WHERE name = ?').get(who).id;
           speaker = { voiceId, key: `v:${voiceId}`, label: who };
         }
-        store.appendLine(id, { start, end: start + 2.5, spokenAt: STARTED + start * 1000, speaker, text, seconds: 2.5, model: '' });
+        store.appendLine(id, { start, end: start + 2.5, spokenAt: startedAt + start * 1000, speaker, text, seconds: 2.5, model: '' });
       }
       db.exec('COMMIT');
     } catch (err) {

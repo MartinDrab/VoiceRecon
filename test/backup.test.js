@@ -10,7 +10,10 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { openDatabase } = require('../src/db');
-const { prepareBackup, restoreBackup, backupName } = require('../src/backup');
+const {
+  prepareBackup, restoreBackup, backupName, pendingRestore, setPendingRestore, cancelPendingRestore, restoreResult,
+  dismissRestoreResult, applyPendingRestore,
+} = require('../src/backup');
 
 const folders = [];
 test.after(() => {
@@ -94,4 +97,60 @@ test('a restore refuses anything that is not a VoiceRecon backup, and changes no
   assert.strictEqual(fs.readFileSync(path.join(dataDir, 'keep'), 'utf8'), 'mine');
   assert.deepStrictEqual(fs.readdirSync(root).sort(), ['data', 'evil.txt', 'junk.tar', 'other.tar'], 'no half-restored folder left');
   assert.strictEqual(backupName(new Date(2026, 9, 5)), 'voicerecon-backup-2026-10-05.tar');
+});
+
+test('a backup uploaded on the Users page is checked, waits for the next start, and is restored then', async () => {
+  const { root, dataDir, db } = dataFolder();
+  const upload = path.join(dataDir, 'restore-upload-1.part');
+  await save(db, dataDir, upload);
+  db.prepare("INSERT INTO users (username, password_hash, role) VALUES ('ben', 'x', 'user')").run(); // after the backup
+  db.close();
+
+  const junk = path.join(root, 'junk.tar');
+  fs.writeFileSync(junk, Buffer.alloc(4096, 1));
+  assert.throws(() => setPendingRestore(dataDir, junk));
+  assert.ok(fs.existsSync(junk), 'a file that is no backup stays where it was');
+  assert.strictEqual(pendingRestore(dataDir), null);
+  const pending = setPendingRestore(dataDir, upload);
+  assert.deepStrictEqual([pending.app, pending.users, pending.voices, pending.transcripts], ['VoiceRecon', 1, 1, 1]);
+  assert.ok(pending.bytes > 0 && pending.uploadedAt > 0);
+  assert.ok(!fs.existsSync(upload));
+
+  // The next start: restored before anything opens the data, and noted for the Users page.
+  fs.writeFileSync(path.join(dataDir, 'restore-upload-2.part'), 'left over from a crash');
+  const result = applyPendingRestore(dataDir);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.createdAt, pending.createdAt);
+  const restored = new DatabaseSync(path.join(dataDir, 'voicerecon.db'));
+  assert.deepStrictEqual(restored.prepare('SELECT username FROM users').all().map((u) => u.username), ['anna']);
+  restored.close();
+  assert.ok(fs.existsSync(path.join(result.previous, 'voicerecon.db')), 'the previous data are kept');
+  assert.deepStrictEqual(fs.readdirSync(result.previous).filter((f) => f.startsWith('restore-')), [], 'without the upload');
+  assert.deepStrictEqual(fs.readdirSync(root).filter((f) => f.endsWith('.tar')), ['junk.tar'], 'the upload is gone');
+  assert.deepStrictEqual(restoreResult(dataDir), result);
+  assert.strictEqual(pendingRestore(dataDir), null);
+  assert.strictEqual(applyPendingRestore(dataDir), null, 'once');
+  dismissRestoreResult(dataDir);
+  assert.strictEqual(restoreResult(dataDir), null);
+});
+
+test('a waiting backup can be cancelled, and a damaged one is tried once and leaves the data as they were', async () => {
+  const { dataDir, db } = dataFolder();
+  await save(db, dataDir, path.join(dataDir, 'restore-upload-1.part'));
+  db.close();
+  setPendingRestore(dataDir, path.join(dataDir, 'restore-upload-1.part'));
+  cancelPendingRestore(dataDir);
+  assert.strictEqual(pendingRestore(dataDir), null);
+  assert.strictEqual(applyPendingRestore(dataDir), null);
+
+  // Damaged after the upload (the start finds it cut short).
+  fs.writeFileSync(path.join(dataDir, 'restore-pending.tar'), Buffer.alloc(700, 0x41));
+  const result = applyPendingRestore(dataDir);
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /cut short|not a VoiceRecon backup/);
+  assert.ok(!fs.existsSync(path.join(dataDir, 'restore-pending.tar')), 'not tried again at the next start');
+  const kept = new DatabaseSync(path.join(dataDir, 'voicerecon.db'));
+  assert.strictEqual(kept.prepare('SELECT COUNT(*) AS n FROM users').get().n, 1);
+  kept.close();
+  assert.deepStrictEqual(restoreResult(dataDir), result);
 });

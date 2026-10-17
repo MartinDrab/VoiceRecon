@@ -8,6 +8,10 @@ const $ = (id) => /** @type {any} */ (document.getElementById(id));
 const tid = Number(location.pathname.split('/').pop());
 const params = new URLSearchParams(location.search);
 const query = params.get('q') || '';
+// Back to the list as it was: its query and filters (history.js), without the line to show.
+const listParams = new URLSearchParams(params);
+listParams.delete('line');
+const listHref = listParams.toString() ? `/history?${listParams}` : '/history';
 let focusLine = Number(params.get('line')) || null;
 let me = null;
 let transcript = null;
@@ -90,13 +94,14 @@ function renderHeader() {
   $('speakers').replaceChildren(...transcript.speakers.map((s) => h('span.chip', { style: { '--c': speakerColor(s) } }, `${speakerLabel(s.name)} · ${s.lines}`)));
   for (const f of ['txt', 'srt', 'vtt', 'docx', 'json']) $(`export-${f}`).href = `/api/transcripts/${tid}/export?format=${f}`;
   $('export-wav').href = `/api/transcripts/${tid}/audio?download=1`;
-  $('export-wav').classList.toggle('hidden', !transcript.audio);
+  $('export-opus').href = `/api/transcripts/${tid}/audio?download=1&format=opus`;
+  for (const f of ['wav', 'opus']) $(`export-${f}`).classList.toggle('hidden', !transcript.audio);
   $('delete-audio').classList.toggle('hidden', !(transcript.audio && mayDelete()));
   $('regroup').classList.toggle('hidden', isLive());
   $('again').classList.toggle('hidden', !(transcript.audio && mayDelete() && !isLive()));
   $('delete').classList.toggle('hidden', !mayDelete());
   $('stop').classList.toggle('hidden', !(isProcessing() && mayDelete()));
-  if (query) $('back').href = `/history?q=${encodeURIComponent(query)}`;
+  $('back').href = listHref;
 }
 
 function renderLines() {
@@ -383,7 +388,7 @@ $('delete').addEventListener('click', async () => {
   if (!confirm(question)) return;
   try {
     await api(`/transcripts/${tid}`, { method: 'DELETE' });
-    location.href = query ? `/history?q=${encodeURIComponent(query)}` : '/history';
+    location.href = listHref;
   } catch (err) {
     toast(err.message, { error: true });
   }

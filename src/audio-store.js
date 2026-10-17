@@ -19,7 +19,7 @@ const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { getSetting, setSetting } = require('./db');
-const { OpusWriter, opusSamples, opusDecode } = require('./opus');
+const { OpusWriter, opusSamples, opusDecode, opusPackets, FRAME } = require('./opus');
 const { HttpError } = require('./errors');
 
 const SAMPLE_RATE = 16000;
@@ -369,6 +369,66 @@ class AudioStore {
       }
     }
     return { bytes: 44 + 2 * total, stream: Readable.from(samples()) };
+  }
+
+  /**
+   * The transcript's whole audio as one Ogg Opus file, about 10 times smaller than WAV, as Buffers:
+   * the Opus pieces' packets as they are (nothing is decoded), a piece not converted yet encoded
+   * now, and silence between pieces. Each piece starts at the 20 ms frame nearest its time.
+   * @param {number} transcriptId
+   * @returns {{ pieces: string[], chunks: AsyncGenerator<Buffer> }} pieces: the files read
+   */
+  opus(transcriptId) {
+    const pieces = this.pieces(transcriptId);
+    if (!pieces.length) throw new HttpError(404, 'This transcript has no audio.');
+    const self = this;
+    async function* chunks() {
+      const out = [];
+      const writer = new OpusWriter((chunk) => out.push(chunk));
+      for (const p of pieces) {
+        const at = Math.round(((p.start - pieces[0].start) * SAMPLE_RATE) / FRAME);
+        while (writer.frames < at) writer.silence();
+        if (p.opus) {
+          for (const packets of opusPackets(p.file)) {
+            for (const packet of packets) writer.add(packet);
+            yield* out.splice(0);
+          }
+        } else {
+          for await (const chunk of self.pcm(p)) {
+            writer.write(chunk);
+            yield* out.splice(0);
+            await new Promise((resolve) => setImmediate(resolve)); // encoding takes the CPU
+          }
+          writer.pad();
+        }
+      }
+      writer.end();
+      yield* out.splice(0);
+    }
+    return { pieces: pieces.map((p) => p.name), chunks: chunks() };
+  }
+
+  /**
+   * Sends the transcript's whole audio as Ogg Opus (opus()), as an HTTP response.
+   * @param {import('express').Response} res
+   * @param {number} transcriptId
+   * @param {{ filename?: string }} [options] filename: save as this file
+   */
+  async sendOpus(res, transcriptId, { filename } = {}) {
+    const { pieces, chunks } = this.opus(transcriptId);
+    this.hold(pieces); // not deleted or converted while they are read
+    res.set({
+      'Content-Type': 'audio/ogg',
+      'Cache-Control': 'no-store',
+      ...(filename ? { 'Content-Disposition': `attachment; filename="${filename}"` } : {}),
+    });
+    try {
+      await pipeline(Readable.from(chunks), res);
+    } catch (err) {
+      if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.warn(`Sending the audio of transcript ${transcriptId} failed:`, err.message);
+    } finally {
+      this.release(pieces);
+    }
   }
 
   /**

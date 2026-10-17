@@ -31,18 +31,18 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
 }
 
 /**
- * Uploads a WAV recording like api() does, but with progress (fetch cannot report upload
- * progress). `onProgress` gets 0..1; aborting `signal` cancels the upload.
+ * Uploads a file (a WAV recording unless `type` says otherwise) like api() does, but with progress
+ * (fetch cannot report upload progress). `onProgress` gets 0..1; aborting `signal` cancels the upload.
  * @param {string} path
  * @param {Blob} blob
- * @param {{ onProgress?: (fraction: number) => void, signal?: AbortSignal }} [options]
+ * @param {{ onProgress?: (fraction: number) => void, signal?: AbortSignal, type?: string }} [options]
  * @returns {Promise<any>}
  */
-export function upload(path, blob, { onProgress, signal } = {}) {
+export function upload(path, blob, { onProgress, signal, type = 'audio/wav' } = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `/api${path}`);
-    xhr.setRequestHeader('Content-Type', 'audio/wav');
+    xhr.setRequestHeader('Content-Type', type);
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
     });

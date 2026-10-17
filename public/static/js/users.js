@@ -1,4 +1,6 @@
-import { api, h, icon, toast, initPage, t, locale, formatNumber } from './common.js';
+import {
+  api, h, icon, toast, initPage, t, plural, locale, formatNumber, formatPercent, formatDateTime, upload,
+} from './common.js';
 
 /** Elements by id; typed loosely because the pages read form fields, dialogs and buttons alike. */
 const $ = (id) => /** @type {any} */ (document.getElementById(id));
@@ -110,6 +112,67 @@ $('audio-form').addEventListener('submit', async (e) => {
   }
 });
 
+// ---------- restoring a backup ----------
+
+const holds = (b) => [plural(b.users, '{n} user', '{n} users'), plural(b.voices, '{n} voice', '{n} voices'),
+  plural(b.transcripts, '{n} transcript', '{n} transcripts')].join(', ');
+
+/** The backup waiting to be restored at the next start, and how the last restore went. */
+function showRestore({ pending, result }) {
+  const notes = [];
+  if (result) {
+    const text = result.ok
+      ? [t('The backup of {date} was restored when VoiceRecon started.', { date: formatDateTime(Date.parse(result.createdAt)) }),
+        result.previous ? t('The previous data are in {folder}; delete that folder once everything works.', { folder: result.previous }) : ''].join(' ')
+      : t('Restoring the uploaded backup failed when VoiceRecon started: {error} The data stayed as they were.', { error: result.error });
+    notes.push(h(`div.notice.small${result.ok ? '' : '.error'}`, {}, h('span.grow', {}, text),
+      h('button.btn.btn-sm', { type: 'button', onclick: () => changeRestore('/backup/restore/result') }, t('OK'))));
+  }
+  if (pending) {
+    notes.push(h('div.notice.warn.small', {},
+      h('span.grow', {}, t('Waiting to be restored when VoiceRecon starts next: the backup of {date} ({holds}). Restart VoiceRecon to restore it.',
+        { date: formatDateTime(Date.parse(pending.createdAt)), holds: holds(pending) })),
+      h('button.btn.btn-sm', { type: 'button', onclick: () => changeRestore('/backup/restore', t('The restore is cancelled.')) }, t('Cancel the restore'))));
+  }
+  $('restore-status').replaceChildren(...notes);
+}
+
+async function changeRestore(path, done) {
+  try {
+    await api(path, { method: 'DELETE' });
+    if (done) toast(done);
+    showRestore(await api('/backup/restore'));
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
+}
+
+$('restore').addEventListener('click', () => {
+  $('restore-file').value = '';
+  $('restore-file').click();
+});
+$('restore-file').addEventListener('change', async () => {
+  const file = $('restore-file').files[0];
+  if (!file) return;
+  if (!confirm(t('Restore “{name}”? When VoiceRecon starts next, everything in it is replaced by this backup, and everyone signs in again.', { name: file.name }))) return;
+  const progress = h('p.muted.small', {}, t('Uploading the backup… {percent}', { percent: formatPercent(0) }));
+  $('restore-status').replaceChildren(progress);
+  $('restore').disabled = true;
+  try {
+    showRestore(await upload('/backup/restore', file, {
+      type: 'application/x-tar',
+      onProgress: (f) => {
+        progress.textContent = t('Uploading the backup… {percent}', { percent: formatPercent(f) });
+      },
+    }));
+    toast(t('The backup will be restored when VoiceRecon starts next.'));
+  } catch (err) {
+    toast(err.message, { error: true });
+    showRestore(await api('/backup/restore'));
+  }
+  $('restore').disabled = false;
+});
+
 $('password-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
@@ -137,6 +200,7 @@ initPage('users').then(async (user) => {
     $('admin-section').classList.remove('hidden');
     await loadUsers();
     showAudio(await api('/settings/audio'));
+    showRestore(await api('/backup/restore'));
   } else {
     $('account-section').classList.remove('mt');
   }

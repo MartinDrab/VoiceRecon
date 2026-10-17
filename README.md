@@ -37,7 +37,7 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 2.
 - **Speaker changes without a pause**: when someone answers without a gap, the utterance is split where the voice changes, and the text is cut between words.
 - **Voices page** (`/voices`): create voices, rename them, change colors, add recordings (record in the browser or upload any audio file the browser can play: WAV, MP3, M4A, OGG, …), play back or delete recordings. After choosing files to upload, a dialog shows how long each one is and lets you use the whole file or only a part of it, from a start time for a length, e.g. `1:30` from `12:00` of a long recording, where the person speaks (at most 10 minutes per recording). *Test recognition* shows how closely a clip matches each voice. Administrators can tune the *match threshold*, turn on *Learn from live speech* and list *Names and terms*: words the recognizer should prefer where they fit what was said, such as names, places and product names. The voices' names are preferred automatically, more lightly; a name that is still misheard can be added to the list too (on a real recording "Flagan" became "FlyGun" that way). Each voice card shows what it has learned from corrections and live speech, with *Forget* to undo it (the recordings stay). It also warns about recordings that would make the voice match the wrong people: one that holds a second person (its voice prints split into two groups that do not sound alike), one that sounds like another saved voice, or one unlike the voice's other recordings; and about a voice with less than 30 s of speech. (On real recordings, one person's "recording" turned out to be another enrolled person's voice, 0.82 alike.)
 - **Transcribing recordings**: *Transcribe a file* (on the History page, and in the Transcript page's menu) takes any audio or video file the browser can play (MP3, M4A/AAC, WAV, OGG/Opus, FLAC, WebM, MP4, …) up to 4 hours long, or only a part of it (for example `20:00` from `1:05:00`, chosen after picking the file). The times of a part's transcript are those of the whole recording, so its subtitles (SRT export) still fit the original video. The browser converts it to 16 kHz mono WAV and uploads it; the server transcribes it in the background with the same speaker recognition as live listening, and the new transcript opens and fills in as it goes (on the 4-CPU development machine in about 8 % of the recording's length: an hour takes about 5 minutes). You can close the page meanwhile, or stop it and keep what is done. From the Transcript page, listening goes on and a link opens the new transcript in another tab. The title is the file name, and the times count from when the recording started (the file's modification time minus its length). Live listening keeps priority, and recordings do not change how voices are recognized. Without a browser, `POST /api/transcripts/upload?name=…` accepts a 16 kHz mono 16-bit WAV file (signed-in session cookie needed; `&offset=` seconds when it is a part from later in a recording).
-- **History** (`/history`): every saved transcript, newest first, with its speakers and first line. The search box finds transcripts containing all the words you type, anywhere in the transcript; case and Czech diacritics are ignored ("dovolene" finds "dovolené") and words match as prefixes. Matching lines are shown with the words highlighted; a click opens the transcript at that line.
+- **History** (`/history`): every saved transcript, newest first, with its speakers and first line. The search box finds transcripts containing all the words you type, anywhere in the transcript; case and Czech diacritics are ignored ("dovolene" finds "dovolené") and words match as prefixes. Matching lines are shown with the words highlighted; a click opens the transcript at that line. Filters next to it narrow the list to one speaker (everything Anna said: the transcripts she speaks in, with her lines; with a search, only her lines count) and to the days a transcript started; the address keeps them, and a transcript leads back to the filtered list.
 - **Saved transcript** (`/history/<id>`):
   - Rename it.
   - Fix a line's text: pencil, then <kbd>Enter</kbd> to save.
@@ -46,7 +46,7 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 2.
   - *Transcribe again* transcribes the transcript once more from its kept audio, with the current models, voices and names list (e.g. after enrolling its speakers or after an update). Its lines are replaced, so corrections made in it are lost; it asks first and says how many. It runs in the background like an uploaded file and can be stopped.
   - Listen: the play button next to a line plays the transcript's audio from that line on, and the line being said is highlighted as it goes, so you can proofread by listening (while audio is kept, see below). The same button stops it.
   - *Re-check speakers* decides who spoke again from all the lines of each speaker together (see [How the transcription works](#how-the-transcription-works)), e.g. after enrolling someone who was an unknown speaker. Speakers you chose by hand stay.
-  - Export as **TXT** (`[time] Name: text`, usable as an evaluation reference), **SRT** subtitles, **VTT** subtitles (WebVTT, for web video players; the speaker as a voice tag), **DOCX** (a Word document: the title, date and length, then one paragraph per speaker turn with its time and the speaker's name in the voice's color; opens in Word, LibreOffice and Google Docs) or **JSON**, and the audio as **WAV**.
+  - Export as **TXT** (`[time] Name: text`, usable as an evaluation reference), **SRT** subtitles, **VTT** subtitles (WebVTT, for web video players; the speaker as a voice tag), **DOCX** (a Word document: the title, date and length, then one paragraph per speaker turn with its time and the speaker's name in the voice's color; opens in Word, LibreOffice and Google Docs) or **JSON**, and the audio as **WAV** or **Opus** (about 10 times smaller; the kept audio is copied into one file without being decoded, with silence where nothing was kept).
   - *Delete audio* deletes only the audio; the text stays.
   - A transcript that is still being recorded updates itself.
   - Everyone signed in can read and edit transcripts; deleting one is for its author and administrators.
@@ -134,14 +134,20 @@ Without a name, the file is `voicerecon-backup-<date>.tar` in the current folder
 copied consistently even while people are listening; login sessions are left out, so after a
 restore everyone signs in again. Uploads still waiting to be transcribed are not included.
 
-To restore one, stop VoiceRecon and run, in its folder:
+To restore one:
 
-```bash
-npm run restore -- my-backup.tar
-```
+- On the **Users** page, administrators click *Restore a backup…* and pick the file. It is checked
+  and kept until VoiceRecon starts next; restart VoiceRecon then (the page shows the waiting
+  backup and can cancel it). The restore runs before anything opens the data, and the Users page
+  says how it went. A file that turns out damaged is not restored, and the data stay as they were.
+- Or stop VoiceRecon and run, in its folder:
 
-It replaces the whole data folder with the backup's contents. The current one is not deleted but
-renamed to `data.before-restore-<time>`, next to it; delete that once everything works. A backup
+  ```bash
+  npm run restore -- my-backup.tar
+  ```
+
+Either way the whole data folder is replaced with the backup's contents. The current one is not
+deleted but renamed to `data.before-restore-<time>`, next to it; delete that once everything works. A backup
 from an older version is brought up to date when VoiceRecon starts. Any `tar` program can open the
 file too (e.g. to take a single recording out of it).
 
