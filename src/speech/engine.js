@@ -25,8 +25,9 @@ const BEAM_PATHS = 4;
 // retry the WER fell from 22-24 % to 9-11.5 %), in Czech ones built from real recordings 0.5 %, on
 // FLEURS and real microphone recordings nothing; a safety net costs nothing then. Speech gives at least 0.7 words per second
 // (FLEURS, silences included), so a result with fewer than 0.5 tokens per second of at least 2 s
-// of audio is decoded again in two halves (and those in two again). Greedy search fails less but
-// not never (it lost 13-16 %), and was 0.2 points worse on Czech FLEURS.
+// of audio is decoded again in two halves (and those in two again); interim results are not, they
+// are replaced within a second anyway and the retry would hold the queue up. Greedy search fails
+// less but not never (it lost 13-16 %), and was 0.2 points worse on Czech FLEURS.
 const MIN_TOKENS_PER_SECOND = 0.5;
 const MIN_RETRY_SECONDS = 2;
 const MAX_SPLITS = 2;
@@ -402,14 +403,19 @@ class SpeechEngine {
     return { text: (r.text || '').trim(), lang: r.lang || '', tokens: r.tokens || [], timestamps: r.timestamps || [], durations: r.durations || [] };
   }
 
-  /** decodeOnce(), and again in two halves when the result is too short for the audio (see MIN_TOKENS_PER_SECOND). */
-  async decode(samples, splits = 0) {
+  /**
+   * decodeOnce(), and again in two halves when the result is too short for the audio (see
+   * MIN_TOKENS_PER_SECOND); not for interim results.
+   * @param {Float32Array} samples
+   * @param {{ interim?: boolean, splits?: number }} [options]
+   */
+  async decode(samples, { interim = false, splits = 0 } = {}) {
     const r = await this.decodeOnce(samples);
     const seconds = samples.length / SAMPLE_RATE;
-    if (splits >= MAX_SPLITS || seconds < MIN_RETRY_SECONDS || r.tokens.length >= MIN_TOKENS_PER_SECOND * seconds) return r;
+    if (interim || splits >= MAX_SPLITS || seconds < MIN_RETRY_SECONDS || r.tokens.length >= MIN_TOKENS_PER_SECOND * seconds) return r;
     const cut = quietestCut(samples);
-    const first = await this.decode(samples.subarray(0, cut), splits + 1);
-    const second = await this.decode(samples.subarray(cut), splits + 1);
+    const first = await this.decode(samples.subarray(0, cut), { splits: splits + 1 });
+    const second = await this.decode(samples.subarray(cut), { splits: splits + 1 });
     const both = joinResults(first, second, cut / SAMPLE_RATE);
     return both.tokens.length > r.tokens.length ? both : r;
   }
@@ -419,7 +425,7 @@ class SpeechEngine {
     const job = this.queue.shift();
     this.running = job;
     try {
-      job.resolve(await this.decode(job.samples));
+      job.resolve(await this.decode(job.samples, { interim: job.interim }));
     } catch (err) {
       job.reject(err);
     } finally {

@@ -186,19 +186,25 @@ class AudioStore {
   convertLater(...names) {
     if (!this.compress) return;
     for (const n of names) if (!this.toConvert.includes(n)) this.toConvert.push(n);
-    if (!this.converting && this.toConvert.length) {
-      this.converting = (async () => {
-        while (this.toConvert.length) {
-          const name = this.toConvert.shift();
-          try {
-            await this.convert(name);
-          } catch (err) {
-            console.warn(`Converting audio ${name} failed:`, err.message);
-          }
+    if (!this.converting && this.toConvert.length) this.converting = this.convertAll();
+  }
+
+  /** Converts what waits, until nothing does; `converting` is cleared in the same turn the loop ends. */
+  async convertAll() {
+    await null; // once this.converting holds this promise
+    try {
+      while (this.toConvert.length) {
+        const name = this.toConvert.shift();
+        try {
+          await this.convert(name);
+        } catch (err) {
+          console.warn(`Converting audio ${name} failed:`, err.message);
         }
-      })().finally(() => {
-        this.converting = null;
-      });
+      }
+    } finally {
+      // Not in a .finally() of the promise: that would run a turn later, and a piece queued in between
+      // would wait for the next convertLater() call.
+      this.converting = null;
     }
   }
 
@@ -210,12 +216,17 @@ class AudioStore {
   async convert(name) {
     const row = this.db.prepare('SELECT data_start FROM transcript_audio WHERE file = ?').get(name);
     if (!row || this.writing.has(name)) return;
+    if (this.held.has(name)) {
+      this.afterRelease.add(name); // read right now (transcribing again, a download): once released
+      return;
+    }
     const source = path.join(this.dir, name);
     const opusName = `${crypto.randomUUID()}.opus`;
     const target = path.join(this.dir, opusName);
     const out = fs.createWriteStream(target);
     const writer = new OpusWriter((chunk) => out.write(chunk));
     const fh = await fs.promises.open(source, 'r');
+    let done = false;
     try {
       const buf = Buffer.alloc(BYTES_PER_SECOND);
       for (let pos = row.data_start; ;) {
@@ -226,11 +237,14 @@ class AudioStore {
         await new Promise((resolve) => setImmediate(resolve)); // a second at a time: listening goes on
       }
       writer.end();
+      done = true;
     } finally {
+      writer.dispose(); // after a read error: the encoder is freed anyway
       await fh.close();
       await new Promise((resolve) => out.end(resolve));
+      if (!done) fs.rmSync(target, { force: true });
     }
-    // Swapped in only if the piece is still there and no one reads its file (transcribing again).
+    // Swapped in only if the piece is still there and no one started reading its file meanwhile.
     if (this.held.has(name)) {
       fs.rmSync(target, { force: true });
       this.afterRelease.add(name);
@@ -310,16 +324,30 @@ class AudioStore {
   /** A piece's samples from its start, as Buffers of 16-bit samples (transcribing it again). */
   async* pcm(piece) {
     if (piece.opus) {
-      for (const chunk of opusDecode(piece.file, 0, Math.round(piece.seconds * SAMPLE_RATE))) yield chunk;
+      // Decoded a packet (20 ms) at a time, passed on about a second at a time, like WAV pieces.
+      let batch = [];
+      let bytes = 0;
+      for (const chunk of opusDecode(piece.file, 0, Math.round(piece.seconds * SAMPLE_RATE))) {
+        batch.push(chunk);
+        bytes += chunk.length;
+        if (bytes >= BYTES_PER_SECOND) {
+          yield Buffer.concat(batch);
+          batch = [];
+          bytes = 0;
+        }
+      }
+      if (batch.length) yield Buffer.concat(batch);
       return;
     }
     const end = piece.dataStart + 2 * Math.round(piece.seconds * SAMPLE_RATE);
-    if (end > piece.dataStart) yield* fs.createReadStream(piece.file, { start: piece.dataStart, end: end - 1 });
+    // for await, not yield*: a reader that stops early is then passed on to the stream as a return.
+    if (end > piece.dataStart) for await (const chunk of fs.createReadStream(piece.file, { start: piece.dataStart, end: end - 1 })) yield chunk;
   }
 
   /**
    * The transcript's audio from `from` to `to` seconds (default: all of it) as a WAV file, with
-   * silence where no piece covers the time: { bytes, stream }.
+   * silence where no piece covers the time: { bytes, stream, pieces }; pieces: the files read, to
+   * hold() while the stream is consumed (each is opened only when its turn comes).
    * @param {number} transcriptId
    * @param {{ from?: number, to?: number }} [range]
    */
@@ -364,11 +392,12 @@ class AudioStore {
           }
           yield* silence(2 * (part.to - part.from) - sent);
         } else if (part.to > part.from) {
-          yield* fs.createReadStream(part.file, { start: part.from, end: part.to - 1 });
+          // for await, not yield*: a client that goes away is then passed on to the stream as a return.
+          for await (const chunk of fs.createReadStream(part.file, { start: part.from, end: part.to - 1 })) yield chunk;
         }
       }
     }
-    return { bytes: 44 + 2 * total, stream: Readable.from(samples()) };
+    return { bytes: 44 + 2 * total, stream: Readable.from(samples()), pieces: pieces.map((p) => p.name) };
   }
 
   /**
@@ -385,25 +414,33 @@ class AudioStore {
     async function* chunks() {
       const out = [];
       const writer = new OpusWriter((chunk) => out.push(chunk));
-      for (const p of pieces) {
-        const at = Math.round(((p.start - pieces[0].start) * SAMPLE_RATE) / FRAME);
-        while (writer.frames < at) writer.silence();
-        if (p.opus) {
-          for (const packets of opusPackets(p.file)) {
-            for (const packet of packets) writer.add(packet);
-            yield* out.splice(0);
+      // (for...of, not yield* of the array: a client that goes away is then a return here, not a TypeError.)
+      const flush = function* () {
+        for (const chunk of out.splice(0)) yield chunk;
+      };
+      try {
+        for (const p of pieces) {
+          const at = Math.round(((p.start - pieces[0].start) * SAMPLE_RATE) / FRAME);
+          while (writer.frames < at) writer.silence();
+          if (p.opus) {
+            for (const packets of opusPackets(p.file)) {
+              for (const packet of packets) writer.add(packet);
+              yield* flush();
+            }
+          } else {
+            for await (const chunk of self.pcm(p)) {
+              writer.write(chunk);
+              yield* flush();
+              await new Promise((resolve) => setImmediate(resolve)); // encoding takes the CPU
+            }
+            writer.pad();
           }
-        } else {
-          for await (const chunk of self.pcm(p)) {
-            writer.write(chunk);
-            yield* out.splice(0);
-            await new Promise((resolve) => setImmediate(resolve)); // encoding takes the CPU
-          }
-          writer.pad();
         }
+        writer.end();
+        yield* flush();
+      } finally {
+        writer.dispose(); // a download cut short: the encoder is freed anyway
       }
-      writer.end();
-      yield* out.splice(0);
     }
     return { pieces: pieces.map((p) => p.name), chunks: chunks() };
   }
@@ -438,7 +475,8 @@ class AudioStore {
    * @param {{ from?: number, to?: number, filename?: string }} [options] filename: save as this file
    */
   async send(res, transcriptId, { from, to, filename } = {}) {
-    const { bytes, stream } = this.wav(transcriptId, { from, to });
+    const { bytes, stream, pieces } = this.wav(transcriptId, { from, to });
+    this.hold(pieces); // not deleted for the size limit, nor swapped for their Opus copy, meanwhile
     res.set({
       'Content-Type': 'audio/wav',
       'Content-Length': String(bytes),
@@ -450,6 +488,8 @@ class AudioStore {
     } catch (err) {
       // The browser stops a line's audio when another one is played: nothing to report then.
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.warn(`Sending the audio of transcript ${transcriptId} failed:`, err.message);
+    } finally {
+      this.release(pieces);
     }
   }
 }

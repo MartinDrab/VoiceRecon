@@ -33,25 +33,42 @@ const UPLOAD = /^restore-upload-[\w-]+\.part$/; // an upload in progress (left o
 
 const pad = (size) => (BLOCK - (size % BLOCK)) % BLOCK;
 
-/** A ustar header for a file. */
-function header(name, size, mtime) {
+/**
+ * A tar header (ustar), owned by root (uid 0; `owner` as the user and group names), so an archive is
+ * the same wherever it is made. Also for the Debian package (scripts/build-deb.js): GNU typeflags
+ * such as 'L' (a long name follows) are accepted by tar and dpkg with this format too. The name is
+ * cut at 100 bytes; backups refuse longer names (header()), the package precedes them with 'L'.
+ * @param {string} name
+ * @param {{ size: number, mtime: number, mode?: number, type?: string, owner?: string }} entry
+ *   mtime in seconds; type: '0' a file, '5' a directory, 'L' a GNU long name
+ */
+function tarHeader(name, { size, mtime, mode = 0o644, type = '0', owner = '' }) {
   const h = Buffer.alloc(BLOCK);
-  if (Buffer.byteLength(name) > 100) throw new Error(`Name too long for the archive: ${name}`);
-  h.write(name, 0, 'utf8');
+  h.write(name, 0, 100, 'utf8');
   const octal = (value, at, width) => h.write(`${value.toString(8).padStart(width - 1, '0')}\0`, at, 'latin1');
-  octal(0o644, 100, 8);
+  octal(mode, 100, 8);
   octal(0, 108, 8);
   octal(0, 116, 8);
   octal(size, 124, 12);
-  octal(Math.floor(mtime / 1000), 136, 12);
+  octal(mtime, 136, 12);
   h.write('        ', 148, 'latin1'); // the checksum counts its own field as spaces
-  h.write('0', 156, 'latin1');
+  h.write(type, 156, 'latin1');
   h.write('ustar\0', 257, 'latin1');
   h.write('00', 263, 'latin1');
+  if (owner) {
+    h.write(owner, 265, 32, 'latin1');
+    h.write(owner, 297, 32, 'latin1');
+  }
   let sum = 0;
   for (const b of h) sum += b;
   h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'latin1');
   return h;
+}
+
+/** The header of a backup's file (mtime in ms). */
+function header(name, size, mtime) {
+  if (Buffer.byteLength(name) > 100) throw new Error(`Name too long for the archive: ${name}`);
+  return tarHeader(name, { size, mtime: Math.floor(mtime / 1000) });
 }
 
 /** All files below `dir` as [{ name (relative, with "/"), file, size, mtime }]. */
@@ -234,19 +251,33 @@ function restoreBackup(file, dataDir) {
     } finally {
       db.close();
     }
-    let previous = null;
-    if (fs.existsSync(dataDir)) {
-      previous = `${dataDir}.before-restore-${stamp}`;
-      fs.renameSync(dataDir, previous);
-    }
-    fs.renameSync(target, dataDir);
-    return { manifest, previous };
+    return { manifest, previous: replaceFolder(target, dataDir, stamp) };
   } catch (err) {
     fs.rmSync(target, { recursive: true, force: true });
     throw err;
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/**
+ * Puts `target` in `dataDir`'s place, keeping what was there as `<dataDir>.before-restore-<stamp>`.
+ * If `target` cannot be moved in, the previous folder is moved back first: a data folder always
+ * remains. Returns where the previous one went (null: there was none).
+ */
+function replaceFolder(target, dataDir, stamp) {
+  let previous = null;
+  if (fs.existsSync(dataDir)) {
+    previous = `${dataDir}.before-restore-${stamp}`;
+    fs.renameSync(dataDir, previous);
+  }
+  try {
+    fs.renameSync(target, dataDir);
+  } catch (err) {
+    if (previous) fs.renameSync(previous, dataDir);
+    throw err;
+  }
+  return previous;
 }
 
 // ---------- restoring from the Users page ----------
@@ -320,6 +351,6 @@ function applyPendingRestore(dataDir) {
 }
 
 module.exports = {
-  prepareBackup, restoreBackup, backupName, checkBackup,
+  prepareBackup, restoreBackup, backupName, checkBackup, tarHeader, replaceFolder,
   pendingRestore, setPendingRestore, cancelPendingRestore, restoreResult, dismissRestoreResult, applyPendingRestore,
 };

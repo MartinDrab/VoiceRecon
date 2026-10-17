@@ -214,6 +214,10 @@ test('speech engine: a result too short for its audio is decoded again in halves
   decoded.length = 0;
   assert.strictEqual((await engine.transcribe(new Float32Array(2 * 16000))).text, 'part of 32000');
   assert.deepStrictEqual(decoded, [32000]);
+  // An interim result is shown for a moment only: one pass, however short it is.
+  decoded.length = 0;
+  assert.strictEqual((await engine.transcribe(audio, { interim: true })).text, '');
+  assert.deepStrictEqual(decoded, [64000]);
 });
 
 test('speech engine queue: uploaded files wait behind live work and do not block interim results', async () => {

@@ -157,7 +157,13 @@ class OpusWriter {
     }
     this.encode(new Int16Array(FRAME), 0);
     this.flush(4);
-    this.encoder.delete();
+    this.dispose();
+  }
+
+  /** Frees the encoder without finishing the file (a download cut short); after end() a no-op. */
+  dispose() {
+    if (this.encoder) this.encoder.delete();
+    this.encoder = null;
   }
 }
 
@@ -238,6 +244,16 @@ function opusSamples(file) {
   }
 }
 
+/** A page's packets as Buffers, read from the file in one go. */
+function readPackets(fd, p) {
+  if (!p.packets.length) return [];
+  const from = p.packets[0][0];
+  const [lastStart, lastLength] = p.packets[p.packets.length - 1];
+  const body = Buffer.alloc(lastStart + lastLength - from);
+  fs.readSync(fd, body, 0, body.length, from);
+  return p.packets.map(([start, length]) => body.subarray(start - from, start - from + length));
+}
+
 /**
  * The audio packets of an Ogg Opus file (20 ms each), a page at a time: arrays of Buffers. Copying
  * them into another file (OpusWriter.add()) needs no decoding.
@@ -247,12 +263,8 @@ function* opusPackets(file) {
   const fd = fs.openSync(file, 'r');
   try {
     for (const p of pages(fd, fs.fstatSync(fd).size).slice(2)) { // after OpusHead and OpusTags
-      if (!p.packets.length) continue;
-      const from = p.packets[0][0];
-      const [lastStart, lastLength] = p.packets[p.packets.length - 1];
-      const body = Buffer.alloc(lastStart + lastLength - from);
-      fs.readSync(fd, body, 0, body.length, from);
-      yield p.packets.map(([start, length]) => body.subarray(start - from, start - from + length));
+      const packets = readPackets(fd, p);
+      if (packets.length) yield packets;
     }
   } finally {
     fs.closeSync(fd);
@@ -282,9 +294,7 @@ function* opusDecode(file, from, to) {
     let at = startOf(first) - Math.round(preSkip / TO_48K); // the decoder's output lags behind by the encoder's delay
     const end = Math.min(to, available(list, preSkip));
     for (let i = first; i < list.length && at < end; i++) {
-      for (const [start, length] of list[i].packets) {
-        const packet = Buffer.alloc(length);
-        fs.readSync(fd, packet, 0, length, start);
+      for (const packet of readPackets(fd, list[i])) {
         const d = decoder.decode(packet);
         const pcm = Buffer.from(d.buffer, d.byteOffset, d.byteLength);
         const n = pcm.length / 2;

@@ -174,6 +174,66 @@ for (const compress of [true, false]) {
   });
 }
 
+test('a piece being downloaded is held: not deleted for the limit, nor converted; a download cut short releases it', async () => {
+  const { dataDir, db, store, transcript } = setup({ compress: true });
+  const tid = transcript(1);
+  const wav = path.join(dataDir, 'upload.wav');
+  fs.writeFileSync(wav, Buffer.concat([wavHeader(2 * 32000), pcm(2, 3000)]));
+  store.add(tid, wav, { start: 0, dataStart: 44, move: true }); // a WAV piece, converted in the background
+  const [piece] = store.pieces(tid);
+  assert.ok(!piece.opus);
+  const gone = Object.assign(new Error('gone'), { code: 'ERR_STREAM_PREMATURE_CLOSE' });
+
+  // A WAV download that takes the first chunk and then waits. A client that goes away is nothing
+  // to warn about (and nothing to misreport: the file streams are left with a return, not a throw).
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (...args) => warned.push(args.join(' '));
+  let stalled = null;
+  const slow = new Writable({ write(_chunk, _enc, done) { stalled = done; } });
+  /** @type {any} */ (slow).set = () => {};
+  const sending = store.send(/** @type {any} */ (slow), tid);
+  while (!stalled) await new Promise((resolve) => setTimeout(resolve, 10));
+  await store.converted();
+  assert.ok(fs.existsSync(piece.file), 'not converted while it is read');
+  setSetting(db, 'audioLimitGb', 1 / 1024 ** 3); // 1 byte: everything is over the limit
+  store.enforceLimit();
+  assert.ok(fs.existsSync(piece.file), 'not deleted while it is read');
+  slow.destroy(gone); // the client went away
+  await sending;
+  assert.deepStrictEqual(store.pieces(tid), [], 'released: over the limit, so deleted');
+  assert.strictEqual(store.held.size, 0);
+
+  // An Opus download cut short releases its pieces too (and frees its encoder).
+  setSetting(db, 'audioLimitGb', 10);
+  fs.writeFileSync(wav, Buffer.concat([wavHeader(2 * 32000), pcm(2, 3000)]));
+  store.add(tid, wav, { start: 0, dataStart: 44, move: true });
+  await store.converted();
+  const cut = new Writable({ write(_chunk, _enc, done) { done(gone); } });
+  /** @type {any} */ (cut).set = () => {};
+  await store.sendOpus(/** @type {any} */ (cut), tid);
+  console.warn = warn;
+  assert.deepStrictEqual(warned, []);
+  assert.strictEqual(store.held.size, 0);
+  assert.strictEqual(store.pieces(tid).length, 1);
+  db.close();
+});
+
+test('a piece queued just as the converter finishes is converted too', async () => {
+  const { dataDir, db, store, transcript } = setup({ compress: true });
+  const tid = transcript(1);
+  // A conversion that ends at once (its piece is gone), and a piece queued in the turn right after
+  // its loop ended: it used to wait for the next convertLater() call.
+  store.convertLater('gone.wav');
+  await Promise.resolve();
+  const wav = path.join(dataDir, 'upload.wav');
+  fs.writeFileSync(wav, Buffer.concat([wavHeader(32000), pcm(1, 1000)]));
+  store.add(tid, wav, { start: 0, dataStart: 44, move: true });
+  await store.converted();
+  assert.deepStrictEqual(store.pieces(tid).map((p) => p.opus), [true]);
+  db.close();
+});
+
 test('live audio that never got a transcript is deleted when it ends', async () => {
   const { db, store } = setup();
   const live = store.startLive();

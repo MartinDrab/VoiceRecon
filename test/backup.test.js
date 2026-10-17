@@ -12,7 +12,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { openDatabase } = require('../src/db');
 const {
   prepareBackup, restoreBackup, backupName, pendingRestore, setPendingRestore, cancelPendingRestore, restoreResult,
-  dismissRestoreResult, applyPendingRestore,
+  dismissRestoreResult, applyPendingRestore, replaceFolder,
 } = require('../src/backup');
 
 const folders = [];
@@ -153,4 +153,25 @@ test('a waiting backup can be cancelled, and a damaged one is tried once and lea
   assert.strictEqual(kept.prepare('SELECT COUNT(*) AS n FROM users').get().n, 1);
   kept.close();
   assert.deepStrictEqual(restoreResult(dataDir), result);
+});
+
+test('a restore that cannot move the new folder in puts the previous data back', () => {
+  const root = tmp();
+  const dataDir = path.join(root, 'data');
+  fs.mkdirSync(dataDir);
+  fs.writeFileSync(path.join(dataDir, 'voicerecon.db'), 'old');
+  // The new folder is gone (or cannot be moved): the data folder is as it was, nothing is left behind.
+  assert.throws(() => replaceFolder(path.join(root, 'missing'), dataDir, 'x'), /ENOENT/);
+  assert.strictEqual(fs.readFileSync(path.join(dataDir, 'voicerecon.db'), 'utf8'), 'old');
+  assert.ok(!fs.existsSync(`${dataDir}.before-restore-x`));
+  // Otherwise the previous data are kept next to the new ones.
+  const target = path.join(root, 'new');
+  fs.mkdirSync(target);
+  fs.writeFileSync(path.join(target, 'voicerecon.db'), 'new');
+  assert.strictEqual(replaceFolder(target, dataDir, 'y'), `${dataDir}.before-restore-y`);
+  assert.strictEqual(fs.readFileSync(path.join(dataDir, 'voicerecon.db'), 'utf8'), 'new');
+  assert.strictEqual(fs.readFileSync(path.join(`${dataDir}.before-restore-y`, 'voicerecon.db'), 'utf8'), 'old');
+  fs.mkdirSync(path.join(root, 'another'));
+  assert.strictEqual(replaceFolder(path.join(root, 'another'), path.join(root, 'fresh'), 'z'), null, 'no previous folder');
+  assert.ok(fs.existsSync(path.join(root, 'fresh')) && !fs.existsSync(path.join(root, 'another')));
 });

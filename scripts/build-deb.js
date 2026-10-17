@@ -27,6 +27,7 @@ const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 const { spawnSync } = require('child_process');
+const { tarHeader } = require('../src/backup');
 
 const ROOT = path.join(__dirname, '..');
 const PACKAGING = path.join(ROOT, 'packaging', 'deb');
@@ -38,32 +39,12 @@ const BLOCK = 512;
 
 // ---------- archives ----------
 
-/** A tar header (GNU format) for one entry. */
-function tarHeader(name, { size, mode, type, mtime }) {
-  const h = Buffer.alloc(BLOCK);
-  h.write(name, 0, 100, 'utf8');
-  const octal = (value, at, width) => h.write(`${value.toString(8).padStart(width - 1, '0')}\0`, at, 'latin1');
-  octal(mode, 100, 8);
-  octal(0, 108, 8); // root
-  octal(0, 116, 8);
-  octal(size, 124, 12);
-  octal(mtime, 136, 12);
-  h.write(type, 156, 'latin1');
-  h.write('ustar  \0', 257, 'latin1');
-  h.write('root', 265, 'latin1');
-  h.write('root', 297, 'latin1');
-  h.fill(' ', 148, 156); // the checksum counts its own field as spaces
-  let sum = 0;
-  for (const b of h) sum += b;
-  h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'latin1');
-  return h;
-}
-
 const padding = (size) => Buffer.alloc((BLOCK - (size % BLOCK)) % BLOCK);
 
 /**
- * A tar archive of [{ name, data?, mode }] (a name ending in "/" is a directory), owned by root.
- * Names longer than 100 bytes get a GNU long-name entry before them, which dpkg reads.
+ * A tar archive of [{ name, data?, mode }] (a name ending in "/" is a directory), owned by root
+ * (the header writer is src/backup.js's). Names longer than 100 bytes get a GNU long-name entry
+ * before them, which dpkg reads.
  */
 function tar(entries, mtime) {
   const out = [];
@@ -73,9 +54,9 @@ function tar(entries, mtime) {
     const name = Buffer.from(e.name, 'utf8');
     if (name.length > 100) {
       const long = Buffer.concat([name, Buffer.alloc(1)]);
-      out.push(tarHeader('././@LongLink', { size: long.length, mode: 0, type: 'L', mtime }), long, padding(long.length));
+      out.push(tarHeader('././@LongLink', { size: long.length, mode: 0, type: 'L', mtime, owner: 'root' }), long, padding(long.length));
     }
-    out.push(tarHeader(e.name, { size, mode: e.mode, type: dir ? '5' : '0', mtime }));
+    out.push(tarHeader(e.name, { size, mode: e.mode, type: dir ? '5' : '0', mtime, owner: 'root' }));
     if (!dir) out.push(e.data, padding(size));
   }
   out.push(Buffer.alloc(2 * BLOCK));

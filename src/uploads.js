@@ -160,7 +160,7 @@ class UploadQueue {
    * @param {number} transcriptId
    */
   again(transcriptId) {
-    this.transcripts.get(transcriptId);
+    const t = this.transcripts.get(transcriptId);
     if (this.transcripts.recording.has(transcriptId)) throw new HttpError(409, 'Wait until the transcript is finished.');
     const pieces = this.audio ? this.audio.pieces(transcriptId) : [];
     if (!pieces.length) throw new HttpError(400, 'This transcript has no audio.');
@@ -175,6 +175,7 @@ class UploadQueue {
       id: transcriptId,
       // Each piece in its own session (live sessions were separate too), at its own times.
       pieces: pieces.map((p, i) => ({ ...p, bytes: Math.round(p.seconds * 16000) * 2, session: i + 1 })),
+      startedAt: t.started_at, // for the wall-clock times where the old lines give none
       status,
       cancelled: false,
       done,
@@ -316,7 +317,7 @@ class UploadQueue {
       this.transcripts.appendLine(job.id, {
         start,
         end: m.end + offset,
-        spokenAt: job.clock ? wallTime(job.clock, start) : job.startedAt + Math.round(start * 1000),
+        spokenAt: job.clock ? wallTime(job.clock, start, job.startedAt) : job.startedAt + Math.round(start * 1000),
         speaker,
         text: m.text,
         seconds: recent.seconds,
@@ -360,16 +361,17 @@ async function* wavChunks(file, dataStart, bytes) {
 }
 
 /**
- * The wall-clock time (ms) of transcript time `t`, from the lines it had: [[start, spokenAt]] by
- * start; the closest line before it (or the first) counts.
+ * The wall-clock time (ms) of transcript time `t`, from the lines the transcript had: [[start,
+ * spokenAt]] by start; the closest line before it (or the first) counts. Without any (all its lines
+ * were deleted), counted from when the transcript started.
  */
-function wallTime(clock, t) {
+function wallTime(clock, t, startedAt) {
   let best = clock[0];
   for (const c of clock) {
     if (c[0] > t) break;
     best = c;
   }
-  return best ? Math.round(best[1] + (t - best[0]) * 1000) : Date.now();
+  return best ? Math.round(best[1] + (t - best[0]) * 1000) : startedAt + Math.round(t * 1000);
 }
 
 module.exports = { UploadQueue, readHeader, titleFromName, MAX_HOURS };

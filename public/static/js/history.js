@@ -45,13 +45,15 @@ function item(tr) {
   };
   const meta = [formatDateTime(tr.startedAt), formatDuration(tr.duration), plural(tr.lines, '{n} line', '{n} lines')];
   if (tr.user) meta.push(t('by {user}', { user: tr.user }));
-  if (filters.voice && !query) meta.push(plural(tr.hits, '{name}: {n} line', '{name}: {n} lines', { name: voiceName() }));
+  // How many lines matched: a search shows them beyond the three snippets; a speaker alone, always.
+  if (query && tr.hits > 3) meta.push(plural(tr.hits, '{n} matching line', '{n} matching lines'));
+  else if (filters.voice && !query) meta.push(plural(tr.hits, '{name}: {n} line', '{name}: {n} lines', { name: voiceName() }));
   const body = tr.snippets
     ? tr.snippets.map((s) => h('a.snippet', { href: href(s.lineId) }, snippetNodes(s.text)))
     : [h('p.preview', {}, tr.preview || t('No lines yet.'))];
   return h('article.card.history-item', {},
     h('a.history-title', { href: href() }, transcriptTitle(tr)),
-    h('div.muted.small', {}, meta.join(' · '), tr.hits > 3 ? ` · ${plural(tr.hits, '{n} matching line', '{n} matching lines')}` : '', statusBadge(tr)),
+    h('div.muted.small', {}, meta.join(' · '), statusBadge(tr)),
     h('div.chips', {}, tr.speakers.slice(0, 8).map((s) => h('span.chip', { style: { '--c': speakerColor(s) } }, speakerLabel(s.name)))),
     ...body);
 }
@@ -112,6 +114,8 @@ $('search').addEventListener('input', (e) => {
 
 // ---------- filters ----------
 
+// From the address: a voice id and days, or nothing (a mistyped link is not sent to the server).
+if (!/^\d+$/.test(filters.voice)) filters.voice = '';
 const days = /^\d{4}-\d{2}-\d{2}$/;
 if (!days.test(filters.from)) filters.from = '';
 if (!days.test(filters.to)) filters.to = '';
