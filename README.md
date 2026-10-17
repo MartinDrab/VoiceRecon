@@ -120,8 +120,10 @@ is then no longer used; keep it if you want to switch back with `SPEAKER_MODEL`.
 
 ### Installing on Debian or Ubuntu (.deb)
 
-On a Linux server, VoiceRecon can run as a service from a Debian package. Build the package on
-any computer with Node.js and an internet connection (also Windows), in the VoiceRecon folder:
+On a Linux server, VoiceRecon can run as a service from a Debian package. Released versions
+have packages for amd64 (x86-64) and arm64 on the project's
+[Releases](https://github.com/MartinDrab/VoiceRecon/releases) page. To build one yourself, on any
+computer with Node.js and an internet connection (also Windows), in the VoiceRecon folder:
 
 ```bash
 npm run deb
@@ -501,7 +503,26 @@ GitHub Actions runs the same checks on every push and pull request (`.github/wor
 Ubuntu with Node 22 and 24, Windows with Node 24). The speech tests need the models, so there they
 skip themselves; a nightly workflow (`speech-tests.yml`, also startable by hand) downloads the
 models, runs every test with `VOICERECON_REQUIRE_MODELS=1` (missing models then fail instead of
-skipping) and attaches an accuracy report to the run.
+skipping) and attaches an accuracy report to the run. CI also builds the Debian package and
+installs it on Ubuntu (`packaging/deb/test-install.sh`): the service starts, the app answers, and
+purging keeps the data.
+
+To release a version, with everything committed:
+
+```bash
+npm version 0.2.0
+```
+
+```bash
+git push --follow-tags
+```
+
+`npm version` puts the version into `package.json`, commits it and tags it `v0.2.0`. The pushed
+tag starts `.github/workflows/release.yml`: it builds the packages for amd64 and arm64, installs the
+amd64 one on Ubuntu to test it, and publishes both with their checksums (`SHA256SUMS`) as a GitHub
+release with notes from the commits since the previous one. A tag that is not the version in
+`package.json` fails. A version like `0.2.0-rc.1` makes a pre-release; its packages say
+`0.2.0~rc.1`, which Debian sorts before `0.2.0`.
 
 Project layout:
 

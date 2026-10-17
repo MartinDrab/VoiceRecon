@@ -1,0 +1,99 @@
+# A release, when a version tag is pushed: npm version <x.y.z> (changes package.json, commits and
+# tags v<x.y.z>), then git push --follow-tags. The Debian packages for amd64 and arm64 are built,
+# the amd64 one is installed and tested on Ubuntu, and both go to a GitHub release with their
+# checksums. A version like 0.2.0-rc.1 makes a pre-release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # to create the release
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  packages:
+    name: Package (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: The tag is the version in package.json
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME is not v$version, the version in package.json. Make a release with: npm version <x.y.z>, then git push --follow-tags."
+            exit 1
+          fi
+      - run: npm ci
+      - name: Build
+        # The maintainer: whoever made the tagged commit.
+        run: npm run deb -- --arch ${{ matrix.arch }} --maintainer "$(git log -1 --format='%an <%ae>')"
+      - name: Inspect
+        run: |
+          dpkg-deb --info dist/*.deb
+          cpu=$(echo ${{ matrix.arch }} | sed 's/amd64/x64/')
+          dpkg-deb --contents dist/*.deb | grep "sherpa-onnx-linux-$cpu/sherpa-onnx.node"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-${{ matrix.arch }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  test:
+    name: Install test (amd64)
+    needs: packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: deb-amd64
+          path: dist
+      - run: bash packaging/deb/test-install.sh dist/voicerecon_*_amd64.deb
+
+  release:
+    name: GitHub release
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: deb-*
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum *.deb > SHA256SUMS
+          version=${GITHUB_REF_NAME#v}
+          amd64=$(ls *_amd64.deb)
+          cat > notes.md <<EOF
+          Packages for Debian and Ubuntu: \`$amd64\` (x86-64) and the \`arm64\` one (ARM). Install Node.js 22.13 or newer first (for example from NodeSource), then:
+
+              sudo apt install ./$amd64
+
+          See "Installing on Debian or Ubuntu" in the README. \`SHA256SUMS\` holds the packages' checksums.
+          EOF
+          prerelease=
+          case "$version" in *-*) prerelease=--prerelease ;; esac
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" *.deb SHA256SUMS --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" *.deb SHA256SUMS --title "VoiceRecon $version" --notes-file notes.md --generate-notes $prerelease
+          fi

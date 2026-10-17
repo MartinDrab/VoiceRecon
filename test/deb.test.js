@@ -110,6 +110,16 @@ test('the package holds the app, its service, settings and command, with the fol
   for (const [md5, name] of sums) assert.strictEqual(crypto.createHash('md5').update(data[`./${name}`].data).digest('hex'), md5, name);
 });
 
+test('a pre-release sorts before its release: 0.2.0-rc.1 is 0.2.0~rc.1 for Debian', () => {
+  const out = tmp();
+  execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'build-deb.js'), '--no-deps', '--out', out, '--version', '0.2.0-rc.1', '--arch', 'arm64',
+    '--maintainer', 'Test <test@example.com>'], { stdio: 'pipe' });
+  // The file keeps the hyphen: GitHub renames "~" in the files of a release.
+  const control = readTar(zlib.gunzipSync(readAr(fs.readFileSync(path.join(out, 'voicerecon_0.2.0-rc.1_arm64.deb')))['control.tar.gz']));
+  assert.match(control['./control'].data.toString(), /^Version: 0\.2\.0~rc\.1$/m);
+  assert.match(control['./control'].data.toString(), /^Architecture: arm64$/m);
+});
+
 test('names longer than 100 bytes get a GNU long-name entry, which tar reads', () => {
   const long = `./usr/lib/voicerecon/node_modules/${'a-rather-long-package-name/'.repeat(4)}index.js`;
   assert.ok(Buffer.byteLength(long) > 100);

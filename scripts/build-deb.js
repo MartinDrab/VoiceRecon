@@ -6,7 +6,8 @@
  * It runs on any system, also Windows: no dpkg-deb is needed, the package (an ar archive of two
  * gzipped tar files) is written here. The production dependencies are installed for the package's
  * architecture (npm ci --os=linux --cpu=…, which picks sherpa-onnx's Linux build), so npm needs
- * the internet. The package goes to dist/voicerecon_<version>_<arch>.deb.
+ * the internet. The package goes to dist/voicerecon_<version>_<arch>.deb; a pre-release such as
+ * 0.2.0-rc.1 gets the Debian version 0.2.0~rc.1, which Debian sorts before 0.2.0.
  *
  * What it installs (packaging/deb/ holds the files besides the app):
  *   /usr/lib/voicerecon/                      the app and its dependencies
@@ -195,7 +196,10 @@ function parseArgs(argv) {
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  const version = opts.version || pkg.version;
+  // A pre-release (0.2.0-rc.1) must sort before its release: Debian sorts "~" before anything, and a
+  // "-" would start a Debian revision. The file keeps npm's version: GitHub renames "~" in release files.
+  const release = opts.version || pkg.version;
+  const version = release.replace(/-/g, '~');
   const who = opts.maintainer || maintainer();
   if (!who) throw new Error('Give the maintainer: --maintainer "Name <email>" (or set git config user.name and user.email).');
   const mtime = Math.floor(Number(process.env.SOURCE_DATE_EPOCH) || Date.now() / 1000);
@@ -231,7 +235,7 @@ function main() {
   const scripts = Object.fromEntries(['postinst', 'prerm', 'postrm'].map((s) => [s, text(s)]));
   const out = opts.out || path.join(ROOT, 'dist');
   fs.mkdirSync(out, { recursive: true });
-  const file = path.join(out, `voicerecon_${version}_${opts.arch}.deb`);
+  const file = path.join(out, `voicerecon_${release}_${opts.arch}.deb`);
   fs.writeFileSync(file, deb({ files, control, scripts, conffiles: ['/etc/voicerecon/voicerecon.env'], mtime }));
   console.log(`${file}: ${(fs.statSync(file).size / 2 ** 20).toFixed(1)} MB, ${files.length} files.`);
 }
