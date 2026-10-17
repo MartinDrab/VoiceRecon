@@ -5,6 +5,9 @@
  * (audio-store.js): about 12 MB per hour instead of 115 MB as WAV. Encoding and decoding use
  * opusscript (libopus compiled to WebAssembly, no native build). On copies of real enrolled
  * recordings, voice prints of the decoded audio were 0.994-0.996 alike to the original's at 32 kbps.
+ * Opus's AUDIO mode, not VOIP: transcribed again from Opus, FLEURS gave 6.35 % WER in English
+ * (VOIP 6.51 %, the original 6.02 %) and 11.10 % in Czech (VOIP 11.17 %, the original 11.04 %),
+ * at the same size; VOIP at 48 kbps was no better than AUDIO at 32.
  *
  * Packets are 20 ms; a page holds up to PAGE_PACKETS of them (one second), so a file being written
  * can be read up to its last full page. Granule positions count 48 kHz samples, as the format says.
@@ -16,10 +19,11 @@ const OpusScript = require('opusscript');
 const SAMPLE_RATE = 16000;
 const FRAME = 320; // 20 ms
 const BITRATE = 32000;
-const PRE_SKIP = 309; // the encoder's delay at 16 kHz in VOIP mode (103 samples, measured), in 48 kHz samples
+// The encoder's delay at 16 kHz, in 48 kHz samples (104 and 103 samples, measured). It is written to
+// each file's OpusHead, which readers go by: files written in VOIP mode before 2026-10-17 keep theirs.
+const PRE_SKIP = { AUDIO: 312, VOIP: 309 };
 const PAGE_PACKETS = 50;
 const TO_48K = 48000 / SAMPLE_RATE;
-const DELAY = PRE_SKIP / TO_48K; // 16 kHz samples the decoder's output lags behind
 
 // ---------- Ogg pages ----------
 
@@ -61,12 +65,15 @@ function page(packets, { granule, serial, sequence, flags = 0 }) {
 /**
  * Writes 16 kHz mono 16-bit samples as an Ogg Opus file, as they come.
  * @param {(chunk: Buffer) => void} out receives the file's bytes in order
+ * @param {{ bitrate?: number, application?: 'VOIP' | 'AUDIO' }} [options] bits per second and the
+ *   encoder's mode (scripts/bench-asr.js compares others)
  */
 class OpusWriter {
-  constructor(out) {
+  constructor(out, { bitrate = BITRATE, application = 'AUDIO' } = {}) {
     this.out = out;
-    this.encoder = new OpusScript(SAMPLE_RATE, 1, OpusScript.Application.VOIP);
-    this.encoder.setBitrate(BITRATE);
+    this.encoder = new OpusScript(SAMPLE_RATE, 1, OpusScript.Application[application]);
+    this.encoder.setBitrate(bitrate);
+    this.preSkip = PRE_SKIP[application];
     this.serial = (Math.random() * 0x100000000) >>> 0;
     this.sequence = 0;
     this.samples = 0; // encoded so far
@@ -76,7 +83,7 @@ class OpusWriter {
     head.write('OpusHead', 0, 'latin1');
     head[8] = 1; // version
     head[9] = 1; // channels
-    head.writeUInt16LE(PRE_SKIP, 10);
+    head.writeUInt16LE(this.preSkip, 10);
     head.writeUInt32LE(SAMPLE_RATE, 12);
     const vendor = Buffer.from('VoiceRecon');
     const tags = Buffer.alloc(8 + 4 + vendor.length + 4);
@@ -112,7 +119,7 @@ class OpusWriter {
   flush(flags = 0) {
     if (!this.packets.length && !flags) return;
     // Granule of a page: where its last packet ends (the last page: where the audio ends).
-    this.emit(this.packets, PRE_SKIP + this.samples * TO_48K, flags);
+    this.emit(this.packets, this.preSkip + this.samples * TO_48K, flags);
     this.packets = [];
   }
 
@@ -163,15 +170,24 @@ function pages(fd, size) {
   return out;
 }
 
+/** The encoder's delay as the file's OpusHead gives it (48 kHz samples). */
+function preSkipOf(fd, list) {
+  const head = Buffer.alloc(12);
+  if (!list.length || fs.readSync(fd, head, 0, 12, list[0].packets[0][0]) < 12 || head.toString('latin1', 0, 8) !== 'OpusHead') {
+    throw new Error('Not an Ogg Opus file.');
+  }
+  return head.readUInt16LE(10);
+}
+
 /**
  * How many samples can be decoded from these pages: up to where the last one ends; in a file still
  * being written (no last page yet), less the encoder's delay, which only the next packets bring out.
  */
-function available(list) {
+function available(list, preSkip) {
   const last = list.filter((p) => p.granule > 0).pop();
   if (!last) return 0;
-  const upTo = Math.round((last.granule - PRE_SKIP) / TO_48K);
-  return Math.max(0, last.flags & 4 ? upTo : upTo - DELAY);
+  const upTo = Math.round((last.granule - preSkip) / TO_48K);
+  return Math.max(0, last.flags & 4 ? upTo : upTo - Math.round(preSkip / TO_48K));
 }
 
 /**
@@ -181,7 +197,8 @@ function available(list) {
 function opusSamples(file) {
   const fd = fs.openSync(file, 'r');
   try {
-    return available(pages(fd, fs.fstatSync(fd).size));
+    const list = pages(fd, fs.fstatSync(fd).size);
+    return list.length ? available(list, preSkipOf(fd, list)) : 0;
   } finally {
     fs.closeSync(fd);
   }
@@ -198,14 +215,17 @@ function* opusDecode(file, from, to) {
   const fd = fs.openSync(file, 'r');
   const decoder = new OpusScript(SAMPLE_RATE, 1, OpusScript.Application.VOIP);
   try {
-    const list = pages(fd, fs.fstatSync(fd).size).slice(2); // after OpusHead and OpusTags
+    const all = pages(fd, fs.fstatSync(fd).size);
+    if (!all.length) return;
+    const preSkip = preSkipOf(fd, all);
+    const list = all.slice(2); // after OpusHead and OpusTags
     // Sample number at the start of each page: the end of the one before.
     let first = 0;
-    const startOf = (i) => (i === 0 ? 0 : Math.round((list[i - 1].granule - PRE_SKIP) / TO_48K));
+    const startOf = (i) => (i === 0 ? 0 : Math.round((list[i - 1].granule - preSkip) / TO_48K));
     while (first + 1 < list.length && startOf(first + 1) <= from) first++;
     first = Math.max(0, first - 1);
-    let at = startOf(first) - DELAY; // the decoder's output lags behind by the encoder's delay
-    const end = Math.min(to, available(list));
+    let at = startOf(first) - Math.round(preSkip / TO_48K); // the decoder's output lags behind by the encoder's delay
+    const end = Math.min(to, available(list, preSkip));
     for (let i = first; i < list.length && at < end; i++) {
       for (const [start, length] of list[i].packets) {
         const packet = Buffer.alloc(length);

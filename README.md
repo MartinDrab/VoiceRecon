@@ -19,7 +19,7 @@ VoiceRecon is a single Node.js server with a plain HTML/JS front end. All speech
 
 | Component | Where | Technology |
 |---|---|---|
-| Voice Transcriber | [src/transcriber.js](src/transcriber.js), [src/speech/engine.js](src/speech/engine.js) | [Silero VAD](https://github.com/snakers4/silero-vad) cuts the stream into utterances; [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) transcribes them, with its full-precision encoder (the int8 one made twice as many errors in Czech) and the int8 decoder and joiner. It covers 25 European languages including **Czech and English** and detects the language by itself. |
+| Voice Transcriber | [src/transcriber.js](src/transcriber.js), [src/speech/engine.js](src/speech/engine.js) | [Silero VAD](https://github.com/snakers4/silero-vad) cuts the stream into utterances; [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) transcribes them, with its full-precision encoder (the int8 one made twice as many errors in Czech and 60 % more in English) and the int8 decoder and joiner. It covers 25 European languages including **Czech and English** and detects the language by itself. |
 | Voice Manager | [src/voices.js](src/voices.js) | [WeSpeaker](https://github.com/wenet-e2e/wespeaker) ResNet34-LM speaker embeddings (voice prints), see [Speaker model](#speaker-model). Each voice's recordings are averaged into a voice print that live speech is compared against (cosine similarity). |
 | Web Interface | [public/](public/), [src/server.js](src/server.js), [src/ws.js](src/ws.js) | Express + WebSocket. The browser captures the microphone, converts it to 16 kHz PCM in an AudioWorklet and streams it to the server. |
 | Users & login | [src/auth.js](src/auth.js) | SQLite (`node:sqlite`), scrypt password hashes, HTTP-only session cookies. |
@@ -52,7 +52,7 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 2.
   - Everyone signed in can read and edit transcripts; deleting one is for its author and administrators.
 - **Light and dark themes**: by default VoiceRecon follows the operating system. The sun/moon/monitor button in the top bar (and *Theme* in the transcript page's menu, or the button in the corner of the sign-in page) switches between *System*, *Light* and *Dark*; the choice is remembered in the browser. Speaker colors are adjusted for each theme so that text in any voice color stays readable.
 - **Users page** (`/users`): administrators add users, set passwords, change roles and delete users. Every user can change their own password there.
-- **Audio of transcripts**: the audio of every transcript is kept with it, so History can play its lines: the microphone audio of live listening (the Transcript page says *Listening (audio is saved)*) and uploaded recordings. It is stored as Ogg Opus (16 kHz mono, 32 kbps) in `DATA_DIR/audio`: about 12 MB per hour instead of 115 MB as WAV. Live audio is compressed as it arrives; an uploaded recording is kept as WAV while it is transcribed and compressed afterwards, and audio kept as WAV by an older version is compressed in the background after an update. At this rate, transcribing again works about as well as from the original: on the test conversation the word error rate was 1.5–3 % through Opus against 4.5 % from the WAV (within noise); on four real recordings 2–9 % of the words came out differently, and voice prints were 0.994–0.996 alike. Administrators can turn this off and set the most audio to keep (10 GB by default, about 900 hours) on the Users page; beyond it, the audio of the oldest transcripts is deleted and their text stays. Deleting a transcript deletes its audio.
+- **Audio of transcripts**: the audio of every transcript is kept with it, so History can play its lines: the microphone audio of live listening (the Transcript page says *Listening (audio is saved)*) and uploaded recordings. It is stored as Ogg Opus (16 kHz mono, 32 kbps, Opus's AUDIO mode) in `DATA_DIR/audio`: about 12 MB per hour instead of 115 MB as WAV. Live audio is compressed as it arrives; an uploaded recording is kept as WAV while it is transcribed and compressed afterwards, and audio kept as WAV by an older version is compressed in the background after an update. Transcribing again from it is about as accurate as from the original: on the FLEURS test sets the word error rate was 11.1 % instead of 11.0 % in Czech (within noise) and 6.4 % instead of 6.0 % in English, and voice prints of real recordings were 0.994–0.996 alike. Administrators can turn this off and set the most audio to keep (10 GB by default, about 900 hours) on the Users page; beyond it, the audio of the oldest transcripts is deleted and their text stays. Deleting a transcript deletes its audio.
 - **Czech and English**: the pages, messages and exports follow the browser's language (Czech or Slovak gives Czech, anything else English). The **CS**/**EN** button in the top bar (*Čeština*/*English* in the transcript page's menu, or the button in the corner of the sign-in page) switches it; the choice is remembered by the browser. Saved data does not change: unknown speakers show as *Mluvčí 2* in Czech and *Speaker 2* in English.
 
 ## Requirements
@@ -103,8 +103,8 @@ Then:
 ### Updating an older install
 
 Older versions used the smaller int8 encoder for speech recognition. The full-precision encoder makes
-half as many errors in Czech (word error rate 11 % instead of 22 % on the FLEURS test set) at the
-same speed, but it is a 2.4 GB download and the server needs about 1.5 GB more RAM. `start.cmd` and
+half as many errors in Czech and a third fewer in English (word error rate 11 % instead of 22 %, and
+6 % instead of 10 %, on the FLEURS test sets) at the same speed, but it is a 2.4 GB download and the server needs about 1.5 GB more RAM. `start.cmd` and
 `./start.sh` download it on the next start. With `npm start`, run `npm run models` first; until then
 the speech models fail to load with a message that `encoder.onnx` and `encoder.weights` are missing.
 Afterwards `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/encoder.int8.onnx` is no longer used
@@ -193,7 +193,7 @@ path is longer than 260 characters.
 1. The browser streams 16 kHz mono audio over a WebSocket (`/ws/transcribe`) in 100 ms frames.
 2. Silero VAD finds speech. An utterance ends after 0.35 s of silence; after 15 s of continuous speech it is cut at the next short dip.
 3. While someone talks, the unfinished utterance is re-transcribed about every 0.8 s whenever the CPU is free. These interim results are shown greyed out.
-4. A finished utterance is transcribed with a little padding around it. One shorter than 2.5 s is transcribed after the last 4 s of speech that came before it, and only its own words are kept: alone, the recognizer often took a short Czech phrase for English ("Ukrajincům" came out as "Uh Ukraine Soom"). Sliding 1.5 s voice prints check whether the speaker changes inside it: first where one saved voice clearly takes over from another, then where two parts simply sound different (for people without a saved voice). When one person speaks before and after someone else, that stretch in the middle is cut out with two cuts, because no single cut separates them. Each part is matched against the saved voices. If no voice reaches the threshold, the part goes to the closest unknown speaker of this session that it resembles at least 0.5 (less strict than the match threshold: an unknown speaker's voice print comes from a few short lines), or starts a new one. A long stretch of one speaker is split into lines at sentence ends (each line at least 3 s long).
+4. A finished utterance is transcribed with a little padding around it. One shorter than 2.5 s is transcribed after the last 4 s of speech that came before it, and only its own words are kept: alone, the recognizer often took a short Czech phrase for English ("Ukrajincům" came out as "Uh Ukraine Soom"). Sliding 1.5 s voice prints check whether the speaker changes inside it: first where one saved voice clearly takes over from another, then where two parts simply sound different (for people without a saved voice). When one person speaks before and after someone else, that stretch in the middle is cut out with two cuts, because no single cut separates them. Each part is matched against the saved voices. If no voice reaches the threshold, the part goes to the closest unknown speaker of this session that it resembles at least 0.5 (less strict than the match threshold: an unknown speaker's voice print comes from a few short lines), or starts a new one. A long stretch of one speaker is split into lines at sentence ends (each line at least 3 s long). If the recognizer returns too little text for the audio (fewer than one token per 2 s of at least 2 s: a fault of its beam search, see [Czech and English](#czech-and-english)), the utterance is transcribed again in two halves, cut at its quietest moment.
 5. Final lines replace the interim text in the browser. Changes made on the Voices page (names, colors) show up in open transcripts immediately.
 
 An uploaded recording goes through the same steps, without interim results and at a lower priority than live listening. Once its last line is out (and when a live session stops writing to a transcript, or with *Re-check speakers* in History), the speakers are decided again per speaker instead of per line ([src/regroup.js](src/regroup.js)): the lines of each speaker are averaged into one voice print of often minutes of speech; speakers whose averages sound alike are merged (one guest split into *Speaker 2* and *Speaker 5*, or an enrolled person whose lines missed the threshold), a line that sounds clearly more like another speaker moves there, an unknown speaker whose average matches a saved voice gets its name, and the unknown speakers are numbered again. Two saved voices are never merged, and a line whose speaker someone chose by hand (in History, or a correction while listening) keeps it. Five test conversations of 8–9 minutes were built from four real speakers (turns 0.1–0.8 s apart, so some turns run together), with none to all of them enrolled. The words credited to the right person rose like this (merging speakers whose averages are at least 0.5 alike):
@@ -206,7 +206,7 @@ An uploaded recording goes through the same steps, without interim results and a
 | none | 87.4 % | 89.5 % |
 | all 4 | 88.3 % | 89.9 % |
 
-Merging at 0.6 or 0.7 was never better and on three of them worse (87.4 % instead of 89.5 % with nobody enrolled).
+Merging at 0.6 or 0.7 was never better and on three of them worse (87.4 % instead of 89.5 % with nobody enrolled). These Czech conversations were measured before the recognizer's dropped utterances were caught (see [Czech and English](#czech-and-english)); words it dropped were not counted. Ten English conversations built the same way gave 98.0 % per line and 98.8 % per speaker, and 0.5 was again the best (0.6: 98.7 %).
 
 ### How voices are matched
 
@@ -262,6 +262,50 @@ of them spoke between two stretches of the other, and the split into speakers ma
 a time. It now also cuts out such a middle stretch, which brought those two down to 0 and 2 % (one
 word), with no change for the enrolled people. Your own meetings are the real test: measure them
 with `npm run evaluate` (below).
+
+### Czech and English
+
+The models and settings above were chosen on Czech. The same measurements on English (FLEURS for
+speech recognition, each sentence alone; VoxPopuli, the European Parliament, for voice matching):
+
+| | Czech | English |
+|---|---:|---:|
+| Word error rate | 11.0 % | 6.0 % |
+| … with the int8 encoder of older versions | 21.6 % | 9.8 % |
+| … transcribed again from the kept audio (Opus) | 11.1 % | 6.4 % |
+| Voice matching: equal error rate | 1.34 % | 0.34 % |
+| Threshold 0.6: enrolled people named correctly (1.5 / 3 / 6 s) | 78 / 96 / 99 % | 77 / 96 / 99 % |
+| Threshold 0.6: people not enrolled given a name (1.5 / 3 / 6 s) | 0.6 / 1.1 / 1.8 % | 0.0 / 0.0 / 0.1 % |
+
+The speaker model was trained on English (VoxCeleb), so it tells English speakers apart even
+better. At the same threshold it names enrolled people as often as in Czech and almost never
+names someone who is not enrolled, so 0.6 stays the default for both. If your meetings are only in
+English, 0.55 names more short lines (89 % instead of 77 % of 1.5 s lines) for 0.1–0.4 % false
+names; at 0.5 it is 95 % for 0.5–1.9 %. The split of an utterance between two speakers (at a
+similarity below 0.5) also works: 0.4 % false splits and no missed changes between two 3 s halves
+(Czech: 0.8 % and 0.6 %). The ten English test conversations (two groups of four speakers, 9
+minutes each) credited 98–99 % of the words to the right person; their speakers come from
+different sessions of the Parliament, which makes them easier to tell apart than people in one
+room, so compare that with the Czech 92 % only loosely.
+
+Two things turned up while measuring:
+
+- **The recognizer's beam search sometimes returns nothing.** In the English test conversations
+  it dropped about a fifth of the words (19–22 %): whole utterances of clear speech came back
+  empty, or as just "Yeah.". This is a known fault of sherpa-onnx's beam search for this model
+  ([k2-fsa/sherpa-onnx#3267](https://github.com/k2-fsa/sherpa-onnx/issues/3267), not fixed in
+  1.13.8). It happened where two different recordings meet within one utterance, and not on FLEURS
+  or on the real microphone recordings checked, but it costs nothing to guard against: a result
+  with too little text for its audio is decoded again in two halves, which brought the word error
+  rate of the test conversations from 22–24 % down to 9–11.5 %. Greedy search (no beam) fails less
+  often but still does, is 0.2 points worse on Czech and cannot prefer the names and terms.
+- **Opus's VOIP mode lost words in English.** The kept audio first used it; transcribed again from
+  it, English FLEURS had 6.5 % errors instead of 6.0 % (48 kbps: 6.3 %). Opus's AUDIO mode at the
+  same size gives 6.4 %, and in Czech 11.1 % (VOIP 11.2 %), so it is used now. Audio kept earlier
+  stays as it is and plays the same.
+
+`scripts/bench-asr.js` (FLEURS) and `scripts/bench-speaker.js` (VoxPopuli) repeat these measurements;
+see the top of each file.
 
 ## Measuring accuracy on your own recordings
 

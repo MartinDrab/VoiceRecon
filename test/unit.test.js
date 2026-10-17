@@ -185,6 +185,37 @@ test('speech engine queue: finals before interims, cancel drops queued jobs', as
   assert.ok(engine.idle);
 });
 
+test('speech engine: a result too short for its audio is decoded again in halves, cut at a pause', async () => {
+  const engine = new SpeechEngine({});
+  const decoded = [];
+  // Like sherpa-onnx's beam search on some audio: nothing for 4 s, the halves decode fine.
+  engine.recognizer = {
+    createStream: () => {
+      const s = { samples: null, acceptWaveform: ({ samples }) => { s.samples = samples; } };
+      return s;
+    },
+    decodeAsync: async (s) => {
+      decoded.push(s.samples.length);
+      return s.samples.length > 3 * 16000
+        ? { text: '', tokens: [], timestamps: [] }
+        : { text: `part of ${s.samples.length}`, tokens: ['▁part', '▁of'], timestamps: [0.1, 0.5], durations: [0.4, 0.4] };
+    },
+  };
+  const audio = new Float32Array(4 * 16000).fill(0.3);
+  audio.fill(0, 30000, 30320); // a pause of 20 ms at 1.88 s, in the middle third
+  const r = await engine.transcribe(audio);
+  const [whole, cut, rest] = decoded;
+  assert.deepStrictEqual([whole, cut + rest, decoded.length], [64000, 64000, 3]);
+  assert.ok(cut > 30000 && cut < 30320, `cut in the pause: ${cut}`);
+  assert.strictEqual(r.text, `part of ${cut} part of ${rest}`);
+  assert.deepStrictEqual(r.timestamps, [0.1, 0.5, 0.1 + cut / 16000, 0.5 + cut / 16000]);
+
+  // A result that fits its audio is kept as it is: one pass.
+  decoded.length = 0;
+  assert.strictEqual((await engine.transcribe(new Float32Array(2 * 16000))).text, 'part of 32000');
+  assert.deepStrictEqual(decoded, [32000]);
+});
+
 test('speech engine queue: uploaded files wait behind live work and do not block interim results', async () => {
   const engine = new SpeechEngine({});
   const order = [];

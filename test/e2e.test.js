@@ -340,7 +340,10 @@ test('live transcription with speaker recognition', { skip: !haveModels && 'mode
     const again = await untilDone(fileId);
     assert.deepStrictEqual(again.lines.map((l) => names[l.speaker.voiceId]), expected.map((e) => e.voice));
     assert.ok(again.lines.every((l) => !l.edited && l.text !== 'Ruční oprava.'), 'the lines are new');
-    assert.ok(again.lines.every((l, i) => Math.abs(l.start - file.lines[i].start) < 0.01), 'at the same times');
+    // Once the upload is kept as Opus, transcribing again hears that: a line may start one step of the
+    // voice detector (32 ms) or of a cut between two speakers in one utterance (0.5 s) apart.
+    const shifts = again.lines.map((l, i) => Math.round(1000 * (l.start - file.lines[i].start)));
+    assert.ok(shifts.every((ms) => Math.abs(ms) <= 532), `at the same times (ms): ${shifts}`);
     assert.ok(Math.abs(again.lines[1].spokenAt - file.lines[1].spokenAt) < 50, 'and the same wall-clock times');
     assert.ok(Math.abs(again.transcript.duration - file.transcript.duration) < 0.01);
     assert.deepStrictEqual(await call('DELETE', `/api/transcripts/${fileId}/audio`), { deleted: true });

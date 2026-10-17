@@ -46,15 +46,32 @@ const collect = (chunks) => {
   return new Int16Array(all.buffer, all.byteOffset, all.length / 2);
 };
 
-function encode(file, pcm, { end = true, pieces = 7 } = {}) {
+function encode(file, pcm, { end = true, pieces = 7, application = undefined } = {}) {
   const chunks = [];
-  const writer = new OpusWriter((c) => chunks.push(c));
+  const writer = new OpusWriter((c) => chunks.push(c), { application });
   // In uneven pieces, as audio arrives.
   const step = Math.ceil(pcm.length / pieces);
   for (let i = 0; i < pcm.length; i += step) writer.write(Buffer.from(pcm.slice(i, i + step).buffer));
   if (end) writer.end();
   fs.writeFileSync(file, Buffer.concat(chunks));
 }
+
+/** The lag (in samples, -3 to 3) at which decoded audio matches the original best. */
+const bestLag = (decoded, pcm) => {
+  const lagged = (lag) => similarity(decoded.subarray(800 + lag, 40000 + lag), pcm.subarray(800, 40000));
+  return [-3, -2, -1, 0, 1, 2, 3].reduce((a, b) => (lagged(b) > lagged(a) ? b : a));
+};
+
+test('a file written in VOIP mode (before 2026-10-17) is read with the delay its header gives', () => {
+  const file = path.join(tmp(), 'voip.opus');
+  const pcm = signal(3.53);
+  encode(file, pcm, { application: 'VOIP' });
+  assert.strictEqual(fs.readFileSync(file).readUInt16LE(28 + 10), 309);
+  assert.strictEqual(opusSamples(file), pcm.length);
+  const whole = collect(opusDecode(file, 0, Infinity));
+  assert.strictEqual(whole.length, pcm.length);
+  assert.strictEqual(bestLag(whole, pcm), 0, 'not shifted');
+});
 
 test('audio round-trips through Ogg Opus: exact length, same waveform, at the right times', () => {
   const dir = tmp();
@@ -110,7 +127,7 @@ test('a file still being written reads up to its last whole page', () => {
   const dir = tmp();
   const file = path.join(dir, 'live.opus');
   encode(file, signal(2.5), { end: false });
-  // Two full pages of a second, less the encoder's delay (103 samples), which the next packets bring.
-  assert.strictEqual(opusSamples(file), 2 * 16000 - 103);
-  assert.strictEqual(collect(opusDecode(file, 0, Infinity)).length, 2 * 16000 - 103);
+  // Two full pages of a second, less the encoder's delay (104 samples), which the next packets bring.
+  assert.strictEqual(opusSamples(file), 2 * 16000 - 104);
+  assert.strictEqual(collect(opusDecode(file, 0, Infinity)).length, 2 * 16000 - 104);
 });

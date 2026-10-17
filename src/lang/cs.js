@@ -57,6 +57,7 @@ module.exports = {
   'That speaker is being saved as a new voice.': 'Tento mluvčí se právě ukládá jako nový hlas.',
   'The start of the part must be a number of seconds.': 'Začátek části musí být počet sekund.',
   'This transcript has no audio.': 'Tento přepis nemá zvuk.',
+  'Not an Ogg Opus file.': 'Nejde o soubor Ogg Opus.',
   'Wait until the transcript is finished.': 'Počkejte, až bude přepis hotový.',
   'That speaker is not in this transcript.': 'Tento mluvčí v přepisu není.',
   'Only the author or an administrator can transcribe this again.': 'Znovu přepsat to může jen autor nebo správce.',

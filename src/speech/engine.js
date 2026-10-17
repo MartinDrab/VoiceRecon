@@ -19,6 +19,18 @@ const MIX_MIN_SHARE = 0.1;
 const EMPTY_RESULT = { text: '', lang: '', tokens: [], timestamps: [], durations: [] };
 // Names and terms (hotwords) need beam search; 4 paths cost about 20-40% more decoding time.
 const BEAM_PATHS = 4;
+// sherpa-onnx's beam search for TDT models (Parakeet) sometimes returns no text, or one short word,
+// for plain speech (k2-fsa/sherpa-onnx#3267, unfixed in 1.13.8); the same audio cut in two decodes
+// fine. In test conversations joined from different recordings it lost 19-22 % of the words (with
+// this retry the WER fell from 22-24 % to 9-11.5 %); on real microphone recordings and FLEURS it
+// did not happen, but a safety net costs nothing then. Speech gives at least 0.7 words per second
+// (FLEURS, silences included), so a result with fewer than 0.5 tokens per second of at least 2 s
+// of audio is decoded again in two halves (and those in two again). Greedy search fails less but
+// not never (it lost 13-16 %), and was 0.2 points worse on Czech FLEURS.
+const MIN_TOKENS_PER_SECOND = 0.5;
+const MIN_RETRY_SECONDS = 2;
+const MAX_SPLITS = 2;
+const CUT_FRAME = 320; // 20 ms: the quietest one in the middle third is where audio is cut in two
 
 const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -58,6 +70,34 @@ function spellable(phrase, pieces) {
     }
     return true;
   });
+}
+
+/** Where to cut audio in two: the middle of its quietest 20 ms in the middle third (a pause, if any). */
+function quietestCut(samples) {
+  let best = samples.length >> 1;
+  let bestEnergy = Infinity;
+  const end = Math.ceil((2 * samples.length) / 3);
+  for (let s = Math.floor(samples.length / 3); s + CUT_FRAME <= end; s += CUT_FRAME / 2) {
+    let e = 0;
+    for (let i = s; i < s + CUT_FRAME; i++) e += samples[i] * samples[i];
+    if (e < bestEnergy) {
+      bestEnergy = e;
+      best = s + CUT_FRAME / 2;
+    }
+  }
+  return best;
+}
+
+/** The results of two consecutive pieces of audio as one; the second's times start `offset` s later. */
+function joinResults(a, b, offset) {
+  const timed = a.timestamps.length === a.tokens.length && b.timestamps.length === b.tokens.length;
+  return {
+    text: [a.text, b.text].filter(Boolean).join(' '),
+    lang: a.lang || b.lang,
+    tokens: [...a.tokens, ...b.tokens],
+    timestamps: timed ? [...a.timestamps, ...b.timestamps.map((t) => t + offset)] : [],
+    durations: timed ? [...a.durations, ...b.durations] : [],
+  };
 }
 
 function l2normalize(v) {
@@ -354,21 +394,32 @@ class SpeechEngine {
     return !(this.running && this.running.rank < 2) && !this.queue.some((j) => j.rank < 2);
   }
 
+  /** One pass of the recognizer, with the names and terms. */
+  async decodeOnce(samples) {
+    const stream = this.hotwords ? this.recognizer.createStream(this.hotwords) : this.recognizer.createStream();
+    stream.acceptWaveform({ samples, sampleRate: SAMPLE_RATE });
+    const r = await this.recognizer.decodeAsync(stream);
+    return { text: (r.text || '').trim(), lang: r.lang || '', tokens: r.tokens || [], timestamps: r.timestamps || [], durations: r.durations || [] };
+  }
+
+  /** decodeOnce(), and again in two halves when the result is too short for the audio (see MIN_TOKENS_PER_SECOND). */
+  async decode(samples, splits = 0) {
+    const r = await this.decodeOnce(samples);
+    const seconds = samples.length / SAMPLE_RATE;
+    if (splits >= MAX_SPLITS || seconds < MIN_RETRY_SECONDS || r.tokens.length >= MIN_TOKENS_PER_SECOND * seconds) return r;
+    const cut = quietestCut(samples);
+    const first = await this.decode(samples.subarray(0, cut), splits + 1);
+    const second = await this.decode(samples.subarray(cut), splits + 1);
+    const both = joinResults(first, second, cut / SAMPLE_RATE);
+    return both.tokens.length > r.tokens.length ? both : r;
+  }
+
   async pump() {
     if (this.running || !this.queue.length) return;
     const job = this.queue.shift();
     this.running = job;
     try {
-      const stream = this.hotwords ? this.recognizer.createStream(this.hotwords) : this.recognizer.createStream();
-      stream.acceptWaveform({ samples: job.samples, sampleRate: SAMPLE_RATE });
-      const r = await this.recognizer.decodeAsync(stream);
-      job.resolve({
-        text: (r.text || '').trim(),
-        lang: r.lang || '',
-        tokens: r.tokens || [],
-        timestamps: r.timestamps || [],
-        durations: r.durations || [],
-      });
+      job.resolve(await this.decode(job.samples));
     } catch (err) {
       job.reject(err);
     } finally {

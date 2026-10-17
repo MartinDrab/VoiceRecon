@@ -50,13 +50,14 @@ const MAX_COHORT_SECONDS = 30;
 const TIMING_RUNS = 30;
 const FALSE_NAME_TARGET = 0.01; // for the "few false names" threshold
 const LABELS = {
-  '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced': 'CAM++ zh/en advanced (current)',
-  '3dspeaker_campplus_zh_en_advanced': 'CAM++ zh/en advanced (current)',
+  '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced': 'CAM++ zh/en advanced',
+  '3dspeaker_campplus_zh_en_advanced': 'CAM++ zh/en advanced',
   '3dspeaker_speech_eres2netv2_sv_zh-cn_16k-common': 'ERes2NetV2 zh-cn',
   wespeaker_en_voxceleb_resnet293_LM: 'WeSpeaker ResNet293-LM (as shipped)',
   wespeaker_en_voxceleb_resnet34_LM: 'WeSpeaker ResNet34-LM (as shipped)',
   wespeaker_en_voxceleb_resnet293_LM_cmn: 'WeSpeaker ResNet293-LM + CMN',
   wespeaker_en_voxceleb_resnet34_LM_cmn: 'WeSpeaker ResNet34-LM + CMN',
+  wespeaker_resnet34_LM_cmn: 'WeSpeaker ResNet34-LM + CMN', // as npm run models saves it
   nemo_en_titanet_large: 'NeMo TitaNet-L',
 };
 
@@ -86,7 +87,8 @@ function parseArgs(argv) {
 }
 
 const modelName = (file) => path.basename(file).replace(/\.onnx$/, '');
-const label = (name) => LABELS[name] || name;
+/** The model's name; "(current)" for the file the app uses (SPEAKER_MODEL). */
+const label = (name) => `${LABELS[name] || name}${name === modelName(config.speakerModel) ? ' (current)' : ''}`;
 const seconds = (n) => n / SAMPLE_RATE;
 
 /** Deterministic random numbers (mulberry32), so every run and every model gets the same trials. */
@@ -405,11 +407,12 @@ function dot(v, a, b, dim) {
 /**
  * Scores between voice prints (jobs a and b). Raw: cosine, as identify() uses it. AS-norm: the
  * cosine standardized against the `top` closest cohort prints of each side, averaged:
- * ((s - mean_a) / std_a + (s - mean_b) / std_b) / 2.
+ * ((s - mean_a) / std_a + (s - mean_b) / std_b) / 2. Without a cohort (no --cohort) AS-norm is raw
+ * cosine: normalizing by no scores would make every score NaN.
  */
 function scorer(model, cohort, top, normalize) {
   const { v, dim } = model;
-  if (!normalize) return (a, b) => dot(v, a, b, dim);
+  if (!normalize || !cohort.length) return (a, b) => dot(v, a, b, dim);
   const stats = new Map();
   const stat = (j) => {
     let s = stats.get(j);
@@ -678,7 +681,9 @@ function report(opts) {
     + `${evalSpeakers.length - enrollable.length} are only unknown people.`);
   say(`- Test segments: ${SEGMENT_SECONDS.map((s) => `${ix.segments[s].length} × ${s} s`).join(', ')}; ${ix.halves.length} utterances with two 3 s halves.`);
   say(`- Open set: ${opts.enrolled} enrolled voices drawn ${opts.draws} times; every other speaker's segments must stay unknown.`);
-  say(`- AS-norm cohort: ${ix.cohort.length} utterance prints of ${new Set(plan.jobs.filter((j) => j.role === 'cohort').map((j) => j.spk)).size} other speakers, top ${opts.top || 'all'}.`);
+  say(ix.cohort.length
+    ? `- AS-norm cohort: ${ix.cohort.length} utterance prints of ${new Set(plan.jobs.filter((j) => j.role === 'cohort').map((j) => j.spk)).size} other speakers, top ${opts.top || 'all'}.`
+    : '- No AS-norm cohort (--cohort): the AS-norm columns repeat raw cosine.');
   const voices = plan.speakers.filter((s) => s.voice);
   if (voices.length) say(`- App voices: ${voices.map((s) => `${s.spk} (${s.speechSeconds.toFixed(0)} s)`).join(', ')}; each half enrolls once (~${(voices[0].speechSeconds / 2).toFixed(0)} s).`);
   say();
@@ -781,13 +786,15 @@ function report(opts) {
   say(table(['Enrollment', 'Segment', 'EER', 'ID acc', 'false name', 'best θ', 'EER AS-norm', 'ID acc AS-norm', 'false name AS-norm', 'best θ AS-norm'], rows));
   say();
 
-  say(`## AS-norm cohort size: ${label(best)}, enrollment ${MAIN_ENROLL} s`);
-  say();
-  say(table(['top', ...SEGMENT_SECONDS.map((s) => `EER ${s} s`)], [25, 50, 100, 200, 400, 0].map((top) => {
-    const res = evaluate(scorer(models.find((m) => m.model === best), ix.cohort, top, true), ix, MAIN_ENROLL, sets.slice(0, 1));
-    return [top || `all (${ix.cohort.length})`, ...SEGMENT_SECONDS.map((s) => pct2(res.perLength[s].eer))];
-  })));
-  say();
+  if (ix.cohort.length) {
+    say(`## AS-norm cohort size: ${label(best)}, enrollment ${MAIN_ENROLL} s`);
+    say();
+    say(table(['top', ...SEGMENT_SECONDS.map((s) => `EER ${s} s`)], [25, 50, 100, 200, 400, 0].map((top) => {
+      const res = evaluate(scorer(models.find((m) => m.model === best), ix.cohort, top, true), ix, MAIN_ENROLL, sets.slice(0, 1));
+      return [top || `all (${ix.cohort.length})`, ...SEGMENT_SECONDS.map((s) => pct2(res.perLength[s].eer))];
+    })));
+    say();
+  }
 
   if (voices.length) {
     say('## The app\'s enrolled voices (each half of a recording enrolls once; θ from the eval data above)');
