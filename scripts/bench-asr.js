@@ -2,8 +2,8 @@
 
 /**
  * Compares speech models on a test set with references, e.g. the Czech or English test split of
- * FLEURS: word error rate (with and without accents) and real-time factor at the app's THREADS
- * setting. --opus first passes each utterance through Ogg Opus as the app keeps audio (src/opus.js),
+ * FLEURS: word error rate (with and without accents) and real-time factor at the app's THREADS and
+ * PROVIDER settings. --opus first passes each utterance through Ogg Opus as the app keeps audio (src/opus.js),
  * as transcribing a transcript again from its kept audio hears it; --opus <kbps> at another bitrate,
  * --opus-voip in Opus's VOIP mode instead of AUDIO (the app's).
  * Each utterance is recognized alone, offline, with the 0.3 s of trailing silence the app adds to
@@ -14,8 +14,9 @@
  *   node scripts/bench-asr.js --table [--out <folder>]
  *
  * The data folder holds test.tsv (FLEURS columns: id, file name, raw transcription, ...) and the
- * WAV files in test/. The app's model folder has the int8 files and the fp32 encoder; the fp32
- * decoder and joiner and Canary are looked up in --models (default %TEMP%/cs-bench/models). Results
+ * WAV files in test/. The app's model folder has the int8 files and the fp32 encoder (and, with
+ * PROVIDER=cuda, the fp32 decoder and joiner); fp32 files it lacks and Canary are looked up in
+ * --models (default %TEMP%/cs-bench/models). Results
  * go to --out (default: the data folder's results/), one JSONL
  * line per utterance, so an interrupted run continues where it stopped; --table prints all
  * variants measured there as a Markdown table.
@@ -49,9 +50,9 @@ const VARIANTS = {
   'parakeet-int8-beam4': parakeet('int8', 'int8', 'modified_beam_search', 4), // the app's setting until 2026-10-16
   'parakeet-int8-beam8': parakeet('int8', 'int8', 'modified_beam_search', 8),
   'parakeet-int8-greedy': parakeet('int8', 'int8', 'greedy_search', 1),
-  'parakeet-fp32-beam4': parakeet('fp32', 'fp32', 'modified_beam_search', 4),
+  'parakeet-fp32-beam4': parakeet('fp32', 'fp32', 'modified_beam_search', 4), // the app's setting with PROVIDER=cuda
   'parakeet-fp32-greedy': parakeet('fp32', 'fp32', 'greedy_search', 1),
-  'parakeet-fp32enc-beam4': parakeet('fp32', 'int8', 'modified_beam_search', 4), // the app's setting
+  'parakeet-fp32enc-beam4': parakeet('fp32', 'int8', 'modified_beam_search', 4), // the app's setting on the CPU
   'parakeet-fp32enc-beam1': parakeet('fp32', 'int8', 'modified_beam_search', 1),
   'parakeet-fp32enc-greedy': parakeet('fp32', 'int8', 'greedy_search', 1),
   'parakeet-int8enc-beam4': parakeet('int8', 'fp32', 'modified_beam_search', 4),
@@ -118,6 +119,7 @@ function createRecognizer(variant, modelsDir) {
         },
         tokens: czechAsSpanishTokens(path.join(dir, 'tokens.txt')),
         numThreads: threads,
+        provider: config.provider,
         debug: 0,
       },
     });
@@ -125,8 +127,8 @@ function createRecognizer(variant, modelsDir) {
   const appDir = path.dirname(config.asr.tokens);
   const file = (name, precision) => {
     if (precision === 'int8') return path.join(appDir, `${name}.int8.onnx`);
-    if (name === 'encoder' && fs.existsSync(config.asr.encoder)) return config.asr.encoder; // the app's fp32 encoder
-    return path.join(modelsDir, FP32_DIR, `${name}.onnx`);
+    const inApp = path.join(appDir, `${name}.onnx`); // the app's fp32 encoder, and its decoder and joiner with PROVIDER=cuda
+    return fs.existsSync(inApp) ? inApp : path.join(modelsDir, FP32_DIR, `${name}.onnx`);
   };
   const files = Object.fromEntries(Object.entries(variant.files).map(([name, precision]) => [name, file(name, precision)]));
   return new sherpa.OfflineRecognizer({
@@ -136,6 +138,7 @@ function createRecognizer(variant, modelsDir) {
       tokens: config.asr.tokens, // the fp32 package's tokens.txt is identical
       numThreads: threads,
       modelType: 'nemo_transducer',
+      provider: config.provider,
       debug: 0,
     },
     decodingMethod: variant.decodingMethod,
@@ -276,7 +279,7 @@ function main() {
   }
   const timestamps = rows.some((r) => r.timestamps);
   const opus = opts.opus ? { kbps: opts.opus, application } : null;
-  const summary = summarize(name, rows, { ...variant, opus, loadSeconds, rssMb, timestamps, sherpa: sherpa.version });
+  const summary = summarize(name, rows, { ...variant, provider: config.provider, opus, loadSeconds, rssMb, timestamps, sherpa: sherpa.version });
   fs.writeFileSync(path.join(outDir, `${name}.summary.json`), `${JSON.stringify(summary, null, 2)}\n`);
   console.log(JSON.stringify(summary, null, 2));
 }

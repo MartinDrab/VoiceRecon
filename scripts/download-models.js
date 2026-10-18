@@ -4,6 +4,8 @@
  * Downloads the speech models into ./models (or MODELS_DIR).
  *   npm run models            models needed to run VoiceRecon (~3 GB download)
  *   npm run models -- --test  also the Czech TTS voices used by scripts/make-test-audio.js
+ * With PROVIDER=cuda also the fp32 decoder and joiner and sherpa-onnx's CUDA build of ONNX Runtime
+ * (src/speech/gpu-libs.js), which it installs where the addon loads it from.
  */
 
 const crypto = require('crypto');
@@ -13,6 +15,7 @@ const { execFileSync } = require('child_process');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const config = require('../src/config');
+const gpu = require('../src/speech/gpu-libs');
 
 const BASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download';
 // A fixed revision of the repository: the SHA-256 values below are of its files, so a later change
@@ -60,6 +63,21 @@ const MODELS = [
     url: `${FP32}/encoder.weights`,
     file: `${PARAKEET}/encoder.weights`,
     sha256: '3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8',
+  },
+  // The fp32 decoder and joiner (`cuda`) are fetched only with PROVIDER=cuda (src/config.js says why).
+  {
+    name: 'Parakeet decoder (fp32, for the GPU)',
+    url: `${FP32}/decoder.onnx`,
+    file: `${PARAKEET}/decoder.onnx`,
+    sha256: 'd593cdb0e571f5a457ec2219af9968cbf6b0e8198e8f7839b40a8754593bf68c',
+    cuda: true,
+  },
+  {
+    name: 'Parakeet joiner (fp32, for the GPU)',
+    url: `${FP32}/joiner.onnx`,
+    file: `${PARAKEET}/joiner.onnx`,
+    sha256: 'b9b0bcf88ac571902e69a6536223ed2d94885e981b85045410f1403d53121a63',
+    cuda: true,
   },
 ];
 
@@ -115,6 +133,32 @@ function sha256Of(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+/**
+ * Downloads a .tar.bz2 whose top folder is `name` and extracts it into baseDir; `unused` entries
+ * inside it (files or folders) are removed first.
+ * @param {string} url
+ * @param {string} baseDir
+ * @param {string} name
+ * @param {{ sha256?: string, unused?: string[] }} [options]
+ */
+async function fetchArchive(url, baseDir, name, { sha256 = undefined, unused = [] } = {}) {
+  const archive = path.join(baseDir, `${name}.tar.bz2`);
+  await download(url, archive, sha256);
+  console.log('  extracting…');
+  // Extract into a scratch folder and move the result into place only when tar succeeded, so an
+  // interrupted extraction is never mistaken for an installed model on the next run.
+  const scratch = path.join(baseDir, `.extract-${name}`);
+  fs.rmSync(scratch, { recursive: true, force: true });
+  fs.mkdirSync(scratch);
+  // bsdtar ships with Windows 10+ and macOS; GNU tar handles .bz2 on Linux. A relative archive
+  // path avoids GNU tar reading "C:\..." as a remote host.
+  execFileSync('tar', ['-xjf', `../${path.basename(archive)}`], { cwd: scratch, stdio: 'inherit' });
+  for (const f of unused) fs.rmSync(path.join(scratch, name, f), { recursive: true, force: true });
+  fs.renameSync(path.join(scratch, name), path.join(baseDir, name));
+  fs.rmSync(scratch, { recursive: true, force: true });
+  fs.rmSync(archive);
+}
+
 async function fetchModel(m) {
   const target = path.join(config.modelsDir, m.file || m.dir);
   if (fs.existsSync(target)) {
@@ -135,21 +179,34 @@ async function fetchModel(m) {
     fs.renameSync(part, target);
     return;
   }
-  const archive = path.join(config.modelsDir, `${m.dir}.tar.bz2`);
-  await download(m.url, archive);
-  console.log('  extracting…');
-  // Extract into a scratch folder and move the result into place only when tar succeeded, so an
-  // interrupted extraction is never mistaken for an installed model on the next run.
-  const scratch = path.join(config.modelsDir, `.extract-${m.dir}`);
-  fs.rmSync(scratch, { recursive: true, force: true });
-  fs.mkdirSync(scratch);
-  // bsdtar ships with Windows 10+ and macOS; GNU tar handles .bz2 on Linux. A relative archive
-  // path avoids GNU tar reading "C:\..." as a remote host.
-  execFileSync('tar', ['-xjf', `../${path.basename(archive)}`], { cwd: scratch, stdio: 'inherit' });
-  for (const f of m.unused || []) fs.rmSync(path.join(scratch, m.dir, f), { force: true });
-  fs.renameSync(path.join(scratch, m.dir), target);
-  fs.rmSync(scratch, { recursive: true, force: true });
-  fs.rmSync(archive);
+  await fetchArchive(m.url, config.modelsDir, m.dir, { unused: m.unused });
+}
+
+/**
+ * sherpa-onnx's CUDA build of ONNX Runtime for PROVIDER=cuda, and its libraries put where the
+ * addon loads them from (src/speech/gpu-libs.js says where and why); also after an npm install
+ * put the CPU libraries back. The package's bin/ repeats the libraries (300 MB on Windows) and is
+ * not kept.
+ */
+async function fetchGpuLibs() {
+  const pkg = gpu.gpuPackage();
+  if (!pkg) {
+    throw new Error(`PROVIDER=cuda needs sherpa-onnx's CUDA libraries, which exist for Windows and Linux x64 only, not for ${process.platform}-${process.arch}.`);
+  }
+  const installed = require('sherpa-onnx-node/package.json').version;
+  if (installed !== gpu.SHERPA_VERSION) {
+    throw new Error(`The CUDA libraries are those of sherpa-onnx ${gpu.SHERPA_VERSION}, but sherpa-onnx-node ${installed} is installed: update src/speech/gpu-libs.js.`);
+  }
+  if (fs.existsSync(path.join(config.gpuLibsDir, pkg.name))) {
+    console.log(`✓ ${pkg.name} (already present)`);
+  } else {
+    console.log(`↓ ${pkg.name} (ONNX Runtime with CUDA, ${pkg.megabytes} MB)`);
+    fs.mkdirSync(config.gpuLibsDir, { recursive: true });
+    await fetchArchive(pkg.url, config.gpuLibsDir, pkg.name, { sha256: pkg.sha256, unused: ['bin', 'include'] });
+  }
+  for (const f of gpu.installLibs(config)) console.log(`  → ${f}`);
+  const missing = gpu.missingLibs(config);
+  if (missing.length) throw new Error(`The CUDA libraries are incomplete:\n${missing.map((f) => `  ${f}`).join('\n')}`);
 }
 
 /**
@@ -168,8 +225,10 @@ async function main() {
   checkSpeakerModel();
   fs.mkdirSync(config.modelsDir, { recursive: true });
   const list = (process.argv.includes('--test') ? [...MODELS, ...TEST_MODELS] : MODELS)
-    .filter((m) => !m.speaker || path.join(config.modelsDir, m.file) === config.speakerModel);
+    .filter((m) => !m.speaker || path.join(config.modelsDir, m.file) === config.speakerModel)
+    .filter((m) => !m.cuda || config.provider === 'cuda');
   for (const m of list) await fetchModel(m);
+  if (config.provider === 'cuda') await fetchGpuLibs();
   console.log(`Models are in ${config.modelsDir}`);
 }
 

@@ -304,6 +304,93 @@ test('relative paths in the settings count from the project folder', () => {
   assert.deepStrictEqual(JSON.parse(out), [path.join(root, 'some-data'), path.join(root, 'certs', 'cert.pem')]);
 });
 
+test('PROVIDER=cuda switches to the fp32 decoder and joiner; other values are refused', () => {
+  const root = path.join(__dirname, '..');
+  const script = `const path = require('path'); const c = require(${JSON.stringify(path.join(root, 'src', 'config.js'))}); `
+    + 'console.log(JSON.stringify([c.provider, path.basename(c.asr.decoder), path.basename(c.asr.joiner), c.modelFiles.includes(c.asr.joiner)]));';
+  const run = (PROVIDER) => execFileSync(process.execPath, ['-e', script], { cwd: os.tmpdir(), env: { ...process.env, PROVIDER }, encoding: 'utf8', stdio: 'pipe' });
+  assert.deepStrictEqual(JSON.parse(run('')), ['cpu', 'decoder.int8.onnx', 'joiner.int8.onnx', true]);
+  assert.deepStrictEqual(JSON.parse(run('CUDA ')), ['cuda', 'decoder.onnx', 'joiner.onnx', true]);
+  assert.throws(() => run('gpu'), /PROVIDER must be cpu or cuda/);
+});
+
+test('the CUDA libraries: the package per platform, where its files must be, and what the server needs', () => {
+  const { gpuPackage, missingLibs, installLibs, serverEnv, missingPrerequisites, cudaHint } = require('../src/speech/gpu-libs');
+  assert.match(gpuPackage('win32', 'x64').url, /\/v1\.13\.8\/sherpa-onnx-v1\.13\.8-cuda-13\.x-cudnn-9\.x-onnxruntime1\.28\.2-win-x64-cuda\.tar\.bz2$/);
+  assert.match(gpuPackage('linux', 'x64').name, /-linux-x64-gpu$/);
+  assert.strictEqual(gpuPackage('darwin', 'arm64'), null);
+  assert.strictEqual(gpuPackage('linux', 'arm64'), null);
+
+  const dir = tmp();
+  const config = { provider: 'cuda', gpuLibsDir: path.join(dir, 'gpu-libs') };
+  const addon = path.join(dir, 'addon');
+  fs.mkdirSync(addon);
+
+  // Windows: the extracted package, and copies of its libraries next to the addon.
+  const win = { platform: 'win32', arch: 'x64', addon };
+  const dlls = ['onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll'];
+  const libs = path.join(config.gpuLibsDir, gpuPackage('win32', 'x64').name, 'lib');
+  assert.deepStrictEqual(missingLibs(config, win).map((f) => path.basename(f)), dlls);
+  fs.mkdirSync(libs, { recursive: true });
+  for (const f of dlls) fs.writeFileSync(path.join(libs, f), `cuda ${f}`);
+  fs.writeFileSync(path.join(addon, 'onnxruntime.dll'), 'the CPU one, of another size');
+  assert.deepStrictEqual(missingLibs(config, win).map((f) => path.basename(f)), dlls, 'extracted, but not next to the addon');
+  assert.strictEqual(installLibs(config, win).length, 3);
+  assert.deepStrictEqual(missingLibs(config, win), []);
+  assert.strictEqual(fs.readFileSync(path.join(addon, 'onnxruntime.dll'), 'utf8'), 'cuda onnxruntime.dll');
+  assert.deepStrictEqual(installLibs(config, win), [], 'nothing to copy the second time');
+  assert.deepStrictEqual(serverEnv(config, { PATH: 'x' }, 'win32', 'x64'), { PATH: 'x' }, 'Windows needs no library path');
+
+  // Linux: the libraries stay in the package, and the server gets them through LD_LIBRARY_PATH.
+  const linux = { platform: 'linux', arch: 'x64', addon };
+  const so = path.join(config.gpuLibsDir, gpuPackage('linux', 'x64').name, 'lib');
+  assert.strictEqual(missingLibs(config, linux).length, 4);
+  fs.mkdirSync(so, { recursive: true });
+  for (const f of gpuPackage('linux', 'x64').libs) fs.writeFileSync(path.join(so, f), f);
+  assert.deepStrictEqual(missingLibs(config, linux), []);
+  assert.deepStrictEqual(installLibs(config, linux), []);
+  assert.deepStrictEqual(serverEnv(config, { LD_LIBRARY_PATH: '/opt/x' }, 'linux', 'x64'), { LD_LIBRARY_PATH: `${so}:/opt/x` });
+  assert.deepStrictEqual(serverEnv(config, {}, 'linux', 'x64'), { LD_LIBRARY_PATH: so });
+  assert.deepStrictEqual(serverEnv({ ...config, provider: 'cpu' }, { A: '1' }, 'linux', 'x64'), { A: '1' });
+  assert.deepStrictEqual(missingLibs(config, { platform: 'darwin', arch: 'arm64' }), [], 'no package, nothing to install');
+
+  // The NVIDIA libraries: looked for in PATH on Windows, in LD_LIBRARY_PATH and the linker cache on Linux.
+  const nvidia = path.join(dir, 'nvidia');
+  fs.mkdirSync(nvidia);
+  const windowsLibs = ['cudart64_13.dll', 'cublas64_13.dll', 'cublasLt64_13.dll', 'cufft64_12.dll', 'cudnn64_9.dll'];
+  assert.deepStrictEqual(missingPrerequisites({ platform: 'win32', arch: 'x64', env: { PATH: nvidia } }), windowsLibs);
+  for (const f of windowsLibs.slice(0, -1)) fs.writeFileSync(path.join(nvidia, f), '');
+  assert.deepStrictEqual(missingPrerequisites({ platform: 'win32', arch: 'x64', env: { Path: `${dir}${path.delimiter}${nvidia}` } }), ['cudnn64_9.dll']);
+  fs.writeFileSync(path.join(nvidia, 'cudnn64_9.dll'), '');
+  assert.deepStrictEqual(missingPrerequisites({ platform: 'win32', arch: 'x64', env: { PATH: nvidia } }), []);
+  const known = new Set(['libcudart.so.13', 'libcublas.so.13', 'libcublasLt.so.13', 'libcurand.so.10', 'libnvrtc.so.13']);
+  assert.deepStrictEqual(missingPrerequisites({ platform: 'linux', arch: 'x64', env: {}, known }), ['libcudnn.so.9']);
+  fs.writeFileSync(path.join(nvidia, 'libcudnn.so.9'), '');
+  assert.deepStrictEqual(missingPrerequisites({ platform: 'linux', arch: 'x64', env: { LD_LIBRARY_PATH: nvidia }, known }), []);
+  assert.strictEqual(missingPrerequisites({ platform: 'darwin', arch: 'arm64' }).length, 1);
+  assert.match(cudaHint(config, 'win32', 'x64'), /npm run models/);
+  assert.match(cudaHint(config, 'linux', 'x64'), /LD_LIBRARY_PATH/);
+  assert.match(cudaHint(config, 'darwin', 'arm64'), /PROVIDER=cpu/);
+});
+
+test('with PROVIDER=cuda the engine asks for CUDA only when the NVIDIA libraries can be found', () => {
+  const { missingPrerequisites } = require('../src/speech/gpu-libs');
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (m) => warnings.push(String(m));
+  try {
+    assert.strictEqual(new SpeechEngine({ provider: 'cpu' }).chooseProvider(), 'cpu');
+    assert.strictEqual(warnings.length, 0);
+    const chosen = new SpeechEngine({ provider: 'cuda', gpuLibsDir: 'gpu-libs' }).chooseProvider();
+    const missing = missingPrerequisites();
+    assert.strictEqual(chosen, missing.length ? 'cpu' : 'cuda');
+    assert.strictEqual(warnings.length, missing.length ? 1 : 0);
+    if (missing.length) assert.ok(warnings[0].includes(missing[0]) && warnings[0].includes('runs on the CPU'), warnings[0]);
+  } finally {
+    console.warn = origWarn;
+  }
+});
+
 test('settings are stored as JSON', () => {
   const db = openDatabase(tmp());
   assert.strictEqual(getSetting(db, 'x', 0.4), 0.4);

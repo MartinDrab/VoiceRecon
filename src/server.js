@@ -157,6 +157,7 @@ api.get('/status', user, (_req, res) => {
     error: engine.loadError && engine.loadError.message,
     threshold: voices.threshold,
     threads: config.threads,
+    provider: engine.provider, // 'cpu' also when PROVIDER=cuda could not be used (the log says why)
     speakerModel: path.basename(config.speakerModel),
   });
 });
@@ -444,13 +445,13 @@ server.listen(config.port, config.host, () => {
 });
 
 console.log(`Data directory: ${config.dataDir}`);
-console.log(`Loading speech models (${config.threads} threads)...`);
+console.log(`Loading speech models (${config.threads} threads${config.provider === 'cuda' ? ', CUDA' : ''})...`);
 const t0 = Date.now();
 engine.load()
   .then(() => {
     voices.init();
     syncHotwords();
-    console.log(`Speech models ready in ${((Date.now() - t0) / 1000).toFixed(1)} s.`);
+    console.log(`Speech models ready in ${((Date.now() - t0) / 1000).toFixed(1)} s${engine.provider === 'cuda' ? ' on the GPU' : ''}.`);
   })
   .catch((err) => console.error(`Speech models failed to load: ${err.message}`))
   .finally(() => ws.notifyStatus());

@@ -271,7 +271,7 @@ function audioOf(pcm, parts) {
 /** A SpeechEngine with only a speaker model, so embed() and embedLong() run the app's own code. */
 function speakerEngine(model, numThreads) {
   const engine = new SpeechEngine({});
-  engine.extractor = new sherpa.SpeakerEmbeddingExtractor({ model, numThreads, debug: 0 });
+  engine.extractor = new sherpa.SpeakerEmbeddingExtractor({ model, numThreads, provider: config.provider, debug: 0 });
   return engine;
 }
 

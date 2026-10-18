@@ -28,15 +28,23 @@ function num(name, fallback) {
 }
 
 const modelsDir = pathSetting('MODELS_DIR', 'models');
+// Where the models run: the CPU, or an NVIDIA GPU through ONNX Runtime's CUDA execution provider
+// (PROVIDER=cuda; README.md, "Using an NVIDIA GPU"). The VAD always stays on the CPU.
+const provider = (process.env.PROVIDER || 'cpu').trim().toLowerCase();
+if (!['cpu', 'cuda'].includes(provider)) throw new Error(`Environment variable PROVIDER must be cpu or cuda, got "${process.env.PROVIDER}"`);
+const cuda = provider === 'cuda';
 // The int8 package's decoder, joiner and tokens with the full-precision (fp32) encoder: the int8
 // encoder doubled the Czech word error rate (FLEURS: 21.6 % instead of 11.0 %) at the same speed.
-// An fp32 decoder and joiner would gain only 0.3 points but double the beam search's decoding time.
+// On the CPU an fp32 decoder and joiner would gain only 0.3 points but double the beam search's
+// decoding time. On a GPU they are the faster pair (ONNX Runtime has no CUDA kernel for the int8
+// ones' quantization step, so part of every decoding step runs on the CPU: 0.63 s instead of
+// 0.41 s for 19 s of speech on an RTX 5060), so PROVIDER=cuda uses them.
 const asrDir = path.join(modelsDir, 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8');
 const asr = {
   encoder: path.join(asrDir, 'encoder.onnx'),
   encoderWeights: path.join(asrDir, 'encoder.weights'), // loaded by encoder.onnx from its own folder
-  decoder: path.join(asrDir, 'decoder.int8.onnx'),
-  joiner: path.join(asrDir, 'joiner.int8.onnx'),
+  decoder: path.join(asrDir, cuda ? 'decoder.onnx' : 'decoder.int8.onnx'),
+  joiner: path.join(asrDir, cuda ? 'joiner.onnx' : 'joiner.int8.onnx'),
   tokens: path.join(asrDir, 'tokens.txt'),
 };
 const vadModel = path.join(modelsDir, 'silero_vad.onnx');
@@ -54,6 +62,8 @@ module.exports = {
   tlsKey: process.env.TLS_KEY ? pathSetting('TLS_KEY') : '',
   dataDir: pathSetting('DATA_DIR', 'data'),
   modelsDir,
+  provider,
+  gpuLibsDir: path.join(modelsDir, 'gpu-libs'), // sherpa-onnx's CUDA build of ONNX Runtime (src/speech/gpu-libs.js)
   sessionTtlHours: num('SESSION_TTL_HOURS', 24 * 7),
 
   sampleRate: 16000,

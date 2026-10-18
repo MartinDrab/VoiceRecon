@@ -15,11 +15,11 @@ Can be implemented in any set of languages suitable for individual tasks (C, Del
 ## Implementation
 
 VoiceRecon is a single Node.js server with a plain HTML/JS front end. All speech processing runs
-**locally on the CPU**: no cloud services, no API keys, and no audio leaves the computer.
+**locally on the CPU** (or on an NVIDIA GPU, see [Using an NVIDIA GPU](#using-an-nvidia-gpu-cuda)): no cloud services, no API keys, and no audio leaves the computer.
 
 | Component | Where | Technology |
 |---|---|---|
-| Voice Transcriber | [src/transcriber.js](src/transcriber.js), [src/speech/engine.js](src/speech/engine.js) | [Silero VAD](https://github.com/snakers4/silero-vad) cuts the stream into utterances; [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) transcribes them, with its full-precision encoder (the int8 one made twice as many errors in Czech and 60 % more in English) and the int8 decoder and joiner. It covers 25 European languages including **Czech and English** and detects the language by itself. |
+| Voice Transcriber | [src/transcriber.js](src/transcriber.js), [src/speech/engine.js](src/speech/engine.js) | [Silero VAD](https://github.com/snakers4/silero-vad) cuts the stream into utterances; [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) transcribes them, with its full-precision encoder (the int8 one made twice as many errors in Czech and 60 % more in English) and the int8 decoder and joiner (on a GPU the full-precision ones). It covers 25 European languages including **Czech and English** and detects the language by itself. |
 | Voice Manager | [src/voices.js](src/voices.js) | [WeSpeaker](https://github.com/wenet-e2e/wespeaker) ResNet34-LM speaker embeddings (voice prints), see [Speaker model](#speaker-model). Each voice's recordings are averaged into a voice print that live speech is compared against (cosine similarity). |
 | Web Interface | [public/](public/), [src/server.js](src/server.js), [src/ws.js](src/ws.js) | Express + WebSocket. The browser captures the microphone, converts it to 16 kHz PCM in an AudioWorklet and streams it to the server. |
 | Users & login | [src/auth.js](src/auth.js) | SQLite (`node:sqlite`), scrypt password hashes, HTTP-only session cookies. |
@@ -28,6 +28,7 @@ All models run through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), whi
 
 On the development machine (4 virtual CPUs, no GPU), the speech recognizer runs at about 5 % of
 real time (a 4-second sentence takes about 0.2 s), and the server needs about 2.5–3.5 GB of RAM.
+An NVIDIA GPU makes recognition about four times faster (see [Using an NVIDIA GPU](#using-an-nvidia-gpu-cuda)).
 
 ### What you get
 
@@ -61,6 +62,7 @@ real time (a 4-second sentence takes about 0.2 s), and the server needs about 2.
 - Windows 10/11 x64, Linux or macOS
 - About 3.5 GB of free RAM and 2.6 GB of disk space for the models
 - A browser with microphone access (Chrome, Edge or Firefox)
+- Optional: an NVIDIA GPU with 4 GB or more of memory (see [Using an NVIDIA GPU](#using-an-nvidia-gpu-cuda))
 
 ## Setup
 
@@ -169,6 +171,10 @@ Restoring a backup on the Users page restarts the service with *Restart now*. To
 newer package the same way. `sudo apt purge voicerecon` removes the program and its settings but
 keeps `/var/lib/voicerecon` (your transcripts and voices) and the user `voicerecon`.
 
+With an NVIDIA GPU in the server, install the CUDA 13 libraries and cuDNN 9, set `PROVIDER=cuda` in
+`/etc/voicerecon/voicerecon.env` and restart the service (see [Using an NVIDIA GPU](#using-an-nvidia-gpu-cuda)):
+on its next start it downloads the CUDA build of the speech engine (255 MB).
+
 ### Backup and restore
 
 Everything VoiceRecon keeps is in `DATA_DIR` (`data/`): users, voices and their recordings,
@@ -239,6 +245,7 @@ TLS_KEY=data/key.pem
 | `DATA_DIR` | `./data` | Database and voice recordings |
 | `MODELS_DIR` | `./models` | Speech models |
 | `THREADS` | CPU cores, max 4 | Threads for speech recognition |
+| `PROVIDER` | `cpu` | `cuda` runs speech recognition and voice prints on an NVIDIA GPU (see [Using an NVIDIA GPU](#using-an-nvidia-gpu-cuda)) |
 | `SPEAKER_MODEL` | `wespeaker_resnet34_LM_cmn.onnx` | Speaker-embedding model file in `MODELS_DIR`; `3dspeaker_campplus_zh_en_advanced.onnx` is the older CAM++ (`npm run models` downloads the one named here) |
 | `SPEAKER_THRESHOLD` | `0.6` | Initial match threshold (later changed on the Voices page; a saved threshold counts only for the speaker model it was set with) |
 | `SESSION_TTL_HOURS` | `168` | How long a login lasts |
@@ -247,6 +254,41 @@ TLS_KEY=data/key.pem
 Relative paths (`DATA_DIR`, `MODELS_DIR`, `TLS_CERT`, `TLS_KEY`) count from the project folder,
 wherever the server is started from. Keep the full path of `DATA_DIR` reasonably short on Windows: SQLite cannot open a database whose
 path is longer than 260 characters.
+
+### Using an NVIDIA GPU (CUDA)
+
+With `PROVIDER=cuda` (in `.env` or the environment), speech recognition and voice prints run on an
+NVIDIA GPU through ONNX Runtime's CUDA execution provider instead of the CPU. The voice activity
+detector stays on the CPU, and the recognizer uses its full-precision decoder and joiner, which are
+faster than the int8 ones on a GPU and slightly more accurate. Measured on a laptop with a GeForce
+RTX 5060 (8 GB) against its 4 CPU threads, with beam search as the app runs it:
+
+| | CPU | GPU |
+|---|---:|---:|
+| Recognizing 4 s of speech | 0.38 s | 0.13 s |
+| Recognizing 19 s of speech | 1.6 s | 0.41 s |
+| A 1.5 s voice print | 24 ms | 3 ms |
+| GPU memory held by the models | — | 3.6 GB |
+
+It works on Windows and Linux x64 and needs:
+
+- an NVIDIA GPU with 4 GB or more of memory and a driver for CUDA 13 (version 580 or newer);
+- the CUDA 13 runtime libraries and cuDNN 9 for CUDA 13. On Windows, install the
+  [CUDA Toolkit 13](https://developer.nvidia.com/cuda-downloads) and
+  [cuDNN 9](https://developer.nvidia.com/cudnn-downloads) and put the `bin` folders of both on
+  `PATH`; cuDNN's installer does not do that itself (for example
+  `C:\Program Files\NVIDIA\CUDNN\v9.26\bin\13.4\x64`). On Debian or Ubuntu, NVIDIA's package
+  repository has the CUDA 13 toolkit (`cuda-toolkit-13-x`; its libraries alone, `cuda-libraries-13-x`,
+  are enough) and cuDNN (`libcudnn9-cuda-13`).
+
+Then set `PROVIDER=cuda` and start VoiceRecon with `start.cmd` or `./start.sh` (or run `npm run
+models`, then `npm start`). The first time, it downloads sherpa-onnx's CUDA build of ONNX Runtime
+(478 MB on Windows, 255 MB on Linux, into `models/gpu-libs`) and the recognizer's full-precision
+decoder and joiner (73 MB). On Windows the libraries are copied next to the speech engine in
+`node_modules` (again after every `npm install`); on Linux the launcher gives them to the server in
+`LD_LIBRARY_PATH`, so there a plain `npm start` keeps using the CPU. The log says what happened:
+`Speech models ready in 2.6 s on the GPU.`, or a warning naming what is missing and that the CPU is
+used instead (a missing library never stops VoiceRecon). `/api/status` reports the `provider` in use.
 
 ## How the transcription works
 

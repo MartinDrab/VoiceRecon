@@ -15,6 +15,7 @@ const http = require('http');
 const https = require('https');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const gpu = require('../src/speech/gpu-libs');
 
 const ROOT = path.join(__dirname, '..');
 const MIN_NODE = [22, 13]; // node:sqlite without a flag
@@ -45,24 +46,32 @@ function installDependencies() {
 /**
  * Downloads the speech models when a file is missing (about 3 GB, once). Installs from before the
  * fp32 encoder lack only its two files; the int8 encoder they have is no longer used. Installs from
- * before ResNet34-LM lack only the speaker model (CAM++ stays in the folder).
+ * before ResNet34-LM lack only the speaker model (CAM++ stays in the folder). With PROVIDER=cuda
+ * also the GPU's decoder and joiner, and the CUDA libraries (also when an npm install replaced
+ * them with the CPU ones).
  */
 function downloadModels(config) {
   const missing = config.modelFiles.filter((f) => !fs.existsSync(f));
-  if (!missing.length) return;
+  const gpuLibs = config.provider === 'cuda' ? gpu.missingLibs(config) : [];
+  if (!missing.length && !gpuLibs.length) return;
   try {
     require('./download-models').checkSpeakerModel(); // a SPEAKER_MODEL that must be copied by hand
   } catch (err) {
     fail(err.message);
   }
-  const { encoder, encoderWeights } = config.asr;
-  if (missing.every((f) => f === config.speakerModel)) {
+  const { encoder, encoderWeights, decoder, joiner } = config.asr;
+  if (!missing.length) {
+    // nothing but the libraries below
+  } else if (missing.every((f) => f === config.speakerModel)) {
     console.log('Downloading the more accurate speaker recognition model (27 MB, once)...');
-  } else if (missing.every((f) => f === encoder || f === encoderWeights || f === config.speakerModel)) {
+  } else if (missing.every((f) => f === decoder || f === joiner)) {
+    console.log('Downloading the GPU parts of the speech recognition model (73 MB, once)...');
+  } else if (missing.every((f) => f === encoder || f === encoderWeights || f === config.speakerModel || f === decoder || f === joiner)) {
     console.log('Downloading the more accurate speech recognition model (about 2.4 GB, once)...');
   } else {
     console.log('Downloading the speech models (about 3 GB, only the first time)...');
   }
+  if (gpuLibs.length) console.log(`Installing the CUDA libraries (${gpu.gpuPackage().megabytes} MB, once)...`);
   const r = spawnSync(process.execPath, [path.join(__dirname, 'download-models.js')], { cwd: ROOT, stdio: 'inherit' });
   if (r.status !== 0) {
     fail('Downloading the speech models failed (see above). Check the internet connection and start again; finished models are kept.');
@@ -124,14 +133,15 @@ function openBrowser(url) {
  * Runs the server until it stops, and opens the browser once it listens. A server that exits with
  * RESTART_CODE is started again (the browser is not opened again: the pages reconnect by themselves).
  */
-function runServer(url, browser) {
+function runServer(config, url, browser) {
   const { RESTART_CODE } = require('../src/restart');
   let server = null;
   const start = (again) => {
     server = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
       cwd: ROOT,
       stdio: ['inherit', 'pipe', 'inherit'],
-      env: { ...process.env, VOICERECON_SUPERVISED: '1' }, // the Users page may restart it
+      // The Users page may restart it; on Linux PROVIDER=cuda needs LD_LIBRARY_PATH (gpu-libs.js).
+      env: gpu.serverEnv(config, { ...process.env, VOICERECON_SUPERVISED: '1' }),
     });
     let output = '';
     server.stdout.on('data', (chunk) => {
@@ -174,7 +184,7 @@ async function main() {
   if (running === 'other') {
     fail(`Another program uses port ${config.port}. Choose another port, e.g. PORT=3001 in a .env file in ${ROOT}.`);
   }
-  runServer(url, browser);
+  runServer(config, url, browser);
 }
 
 main().catch((err) => fail(err.stack || String(err)));

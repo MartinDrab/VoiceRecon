@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const { Worker } = require('worker_threads');
 const sherpa = require('sherpa-onnx-node');
+const gpu = require('./gpu-libs');
 const { concat, resample, decodeWav, encodeWav } = require('../audio');
 const { HttpError } = require('../errors');
 
@@ -148,6 +149,7 @@ class SpeechEngine {
     this.config = config;
     this.ready = false;
     this.loadError = null;
+    this.provider = config.provider || 'cpu'; // what the models run on: 'cuda' only once load() finds it usable
     this.queue = [];
     this.running = null; // the job being decoded
     this.vocabulary = { pieces: new Set(), file: '' };
@@ -166,6 +168,7 @@ class SpeechEngine {
         throw new HttpError(500, 'Missing model files (run "npm run models"):\n{files}', { files: missing.map((f) => `  ${f}`).join('\n') });
       }
       const { asr, threads } = this.config;
+      this.provider = this.chooseProvider();
       this.loadSpeakerModel();
       this.vocabulary = loadVocabulary(asr.tokens);
       this.recognizer = await sherpa.OfflineRecognizer.createAsync({
@@ -175,12 +178,23 @@ class SpeechEngine {
           tokens: asr.tokens,
           numThreads: threads,
           modelType: 'nemo_transducer',
+          provider: this.provider,
           debug: 0,
           ...(this.vocabulary.file ? { modelingUnit: 'bpe', bpeVocab: this.vocabulary.file } : {}),
         },
         decodingMethod: 'modified_beam_search',
         maxActivePaths: BEAM_PATHS,
       });
+      if (this.provider === 'cuda') {
+        if (gpu.cudaLoaded()) {
+          // The first decode on the GPU initializes cuDNN (about 0.3 s): better now than in someone's first sentence.
+          await this.decodeOnce(new Float32Array(SAMPLE_RATE));
+        } else {
+          // sherpa-onnx took the CPU (the libraries next to the addon are the CPU ones) and only logged it.
+          this.provider = 'cpu';
+          console.warn(`PROVIDER=cuda, but the CUDA libraries are not installed, so speech runs on the CPU. ${gpu.cudaHint(this.config)}`);
+        }
+      }
       await this.startWorker();
       this.ready = true;
     } catch (err) {
@@ -189,17 +203,31 @@ class SpeechEngine {
     }
   }
 
-  /** The speaker-embedding model alone (all the voice-print worker needs). */
+  /**
+   * 'cuda' when PROVIDER asks for it and the NVIDIA libraries it needs can be found. A missing one
+   * raises no error: sherpa-onnx ends the whole process when the recognizer is created or at the
+   * first decode (cuDNN), so the CPU is used instead and the reason logged.
+   */
+  chooseProvider() {
+    if (this.config.provider !== 'cuda') return 'cpu';
+    const missing = gpu.missingPrerequisites();
+    if (!missing.length) return 'cuda';
+    console.warn(`PROVIDER=cuda, but ${missing.join(', ')} ${missing.length > 1 ? 'were' : 'was'} not found, so speech runs on the CPU. ${gpu.cudaHint(this.config)}`);
+    return 'cpu';
+  }
+
+  /** The speaker-embedding model alone (all the voice-print worker needs), on the same provider as the recognizer. */
   loadSpeakerModel() {
     const { threads, speakerModel } = this.config;
-    this.extractor = new sherpa.SpeakerEmbeddingExtractor({ model: speakerModel, numThreads: Math.min(2, threads), debug: 0 });
+    this.extractor = new sherpa.SpeakerEmbeddingExtractor({ model: speakerModel, numThreads: Math.min(2, threads), provider: this.provider, debug: 0 });
   }
 
   /** Starts the voice-print worker; without it (it failed to start or stopped) the work runs here. */
   async startWorker() {
     try {
       this.worker = await new Promise((resolve, reject) => {
-        const worker = new Worker(path.join(__dirname, 'voice-worker.js'), { workerData: { config: this.config } });
+        // The provider as chosen here (chooseProvider() ran once, in this thread).
+        const worker = new Worker(path.join(__dirname, 'voice-worker.js'), { workerData: { config: { ...this.config, provider: this.provider } } });
         worker.once('message', () => resolve(worker));
         worker.once('error', reject);
         worker.once('exit', (code) => reject(Object.assign(new Error('The voice-print worker stopped.'), { code })));
@@ -283,6 +311,7 @@ class SpeechEngine {
       },
       sampleRate: SAMPLE_RATE,
       numThreads: 1,
+      provider: 'cpu', // 32 ms steps of a tiny model: a GPU call's overhead would only slow it down
       debug: 0,
     }, 60);
   }
